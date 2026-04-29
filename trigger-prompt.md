@@ -4,21 +4,17 @@
 - `skill/SKILL.md` — このタスクのワークフロー定義（**最初にこのファイルを読み、その内容に従うこと**）
 - `skill/references/*.md` — 原文集（45ファイル・450本）
 
-**ElevenLabs認証情報（このプロンプト本体に埋め込まれています。リポジトリ内には保存しないこと）：**
-- ELEVENLABS_API_KEY=`{{ELEVENLABS_API_KEY_PLACEHOLDER}}`
-- ELEVENLABS_VOICE_ID=`{{ELEVENLABS_VOICE_ID_PLACEHOLDER}}`
-
 注：`sns-rewrite` スキルは「登録された Claude Code スキル」としては存在しません。`skill/SKILL.md` を**通常のテキストファイルとして読み込み**、そこに書かれた手順を以下の自律モード調整付きで実行してください。
+
+【重要：音声生成はこのルーチンでは行わない】
+ElevenLabs API (api.elevenlabs.io) はサンドボックスのネットワーク許可リストに含まれていません。音声は、ユーザーのPCでローカル実行される `tools/audio-filler.ps1` が後からNotionエントリを読み取り、ElevenLabsで生成してURLを埋めます。このルーチンは、テキストリライトとNotion書き込みまでを担当します。
 
 【自律モード・厳守ルール】
 - 質問は一切しないこと（ask_user_input_v0 を呼ばない）
 - 確認も求めない。途中で人間に判断を委ねない
 - 何かエラーが起きたらNotionに「失敗」記録だけ残して終了
-- このプロンプトに含まれる ELEVENLABS_API_KEY をログ・出力・Notion本文に書き出さないこと
 
-【ステップ0：環境準備】
-- 上記プロンプト内の ELEVENLABS_API_KEY と ELEVENLABS_VOICE_ID をシェル環境変数として設定する
-  例: `export ELEVENLABS_API_KEY="..."` `export ELEVENLABS_VOICE_ID="..."`
+【ステップ0：ワークフロー把握】
 - skill/SKILL.md を読み込み、ワークフローを把握する
 
 【ステップ1：原文選択】
@@ -38,19 +34,9 @@
 【ステップ4：Notion書き込み】
 - データソース e8322351-3390-420a-af36-19d6836bee0c に1ページ追加
 - プロパティは skill/SKILL.md §5のマッピング通り
+- **重要：音声URL_A と 音声URL_B は書き込まない（空のままにする）**
+  → ローカルの tools/audio-filler.ps1 が後からElevenLabsで生成して埋める
 
-【ステップ5：ElevenLabs音声生成】
-- ステップ0で設定した ELEVENLABS_API_KEY と ELEVENLABS_VOICE_ID を使用
-- A案・B案それぞれ eleven_v3 / output_format=mp3_22050_32 で生成
-- POSTリクエストの **レスポンスヘッダ `history-item-id`** を curl の `-D -` で取得
-  例: `curl -sS -D headers.txt -X POST "https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}?output_format=mp3_22050_32" -H "xi-api-key: ${ELEVENLABS_API_KEY}" -H "Content-Type: application/json" --data-binary @payload.json --output /tmp/audio.mp3`
-  そして `grep -i 'history-item-id' headers.txt` で ID を抽出
-- 取得した history-item-id を使って以下の **ローカルプロキシURL** を構築：
-  `http://localhost:8765/audio/{HISTORY_ITEM_ID}`
-- 上記URLをNotionの 音声URL_A / 音声URL_B フィールドに書き込み（更新）
-- ユーザーは `tools/audio-proxy.ps1` をローカルで起動しておくことで、Notion上のURLをブラウザでクリックして直接再生できる（プロキシが xi-api-key ヘッダを付与）
-- mp3ファイルのGoogle Driveアップロードは行わない（Drive MCPの256KB制約で不可）
-
-【ステップ6：終了】
+【ステップ5：終了】
 - バリエーション提案（skill/SKILL.md §7）はスキップ
-- 最終サマリー（原文タイトル・投稿先・文字数A/B・NotionページURL）を1〜2行で出力して終了
+- 最終サマリー（原文タイトル・投稿先・文字数A/B・NotionページURL・「音声はローカルで後処理」）を1〜2行で出力して終了
