@@ -1,0 +1,7 @@
+.env
+_extracted/
+sns-rewrite-skillv2.skill
+audio_*.mp3
+history.json
+tmp_*.json
+headers_*.txt
