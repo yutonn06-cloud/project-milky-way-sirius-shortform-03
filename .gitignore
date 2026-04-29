@@ -1,4 +1,5 @@
 .env
+.claude/settings.local.json
 _extracted/
 sns-rewrite-skillv2.skill
 audio_*.mp3
