@@ -6,3 +6,4 @@ audio_*.mp3
 history.json
 tmp_*.json
 headers_*.txt
+logs/

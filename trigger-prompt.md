@@ -7,7 +7,7 @@
 注：`sns-rewrite` スキルは「登録された Claude Code スキル」としては存在しません。`skill/SKILL.md` を**通常のテキストファイルとして読み込み**、そこに書かれた手順を以下の自律モード調整付きで実行してください。
 
 【重要：音声生成はこのルーチンでは行わない】
-ElevenLabs API (api.elevenlabs.io) はサンドボックスのネットワーク許可リストに含まれていません。音声は、ユーザーのPCでローカル実行される `tools/audio-filler.ps1` が後からNotionエントリを読み取り、ElevenLabsで生成してURLを埋めます。このルーチンは、テキストリライトとNotion書き込みまでを担当します。
+ElevenLabs API (api.elevenlabs.io) はサンドボックスのネットワーク許可リストに含まれていません。音声生成は、毎日 06:15 JST に GitHub Actions のクロンジョブ（`.github/workflows/audio-filler.yml`）が後からNotionエントリを読み取り、ElevenLabsで生成して `audio-store` リリースに MP3 をアップロードし、その公開URLを音声URL_A/Bプロパティに書き込みます。このルーチンは、テキストリライトとNotion書き込みまでを担当します。
 
 【自律モード・厳守ルール】
 - 質問は一切しないこと（ask_user_input_v0 を呼ばない）
@@ -38,7 +38,7 @@ ElevenLabs API (api.elevenlabs.io) はサンドボックスのネットワーク
 - データソース e8322351-3390-420a-af36-19d6836bee0c に1ページ追加
 - プロパティは skill/SKILL.md §5のマッピング通り
 - **重要：音声URL_A と 音声URL_B は書き込まない（空のままにする）**
-  → ローカルの tools/audio-filler.ps1 が後からElevenLabsで生成して埋める
+  → GitHub Actions のクロンジョブ（audio-filler.yml）が後からElevenLabsで生成して埋める
 
 【ステップ5：終了】
 - バリエーション提案（skill/SKILL.md §7）はスキップ
