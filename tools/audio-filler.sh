@@ -99,7 +99,13 @@ generate_and_upload() {
 
 ensure_release
 
-filter='{"filter":{"property":"音声URL_A","rich_text":{"is_empty":true}},"page_size":50}'
+if [ "${BACKFILL_LOCALHOST:-false}" = "true" ]; then
+  echo "Mode: backfill_localhost (re-process entries whose 音声URL_A contains 'localhost:8765')"
+  filter='{"filter":{"property":"音声URL_A","rich_text":{"contains":"localhost:8765"}},"page_size":50}'
+else
+  echo "Mode: pending (default)"
+  filter='{"filter":{"property":"音声URL_A","rich_text":{"is_empty":true}},"page_size":50}'
+fi
 resp=$(notion_call POST "https://api.notion.com/v1/databases/$NOTION_DATABASE_ID/query" "$filter")
 
 count=$(echo "$resp" | jq '.results | length')

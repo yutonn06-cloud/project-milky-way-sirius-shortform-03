@@ -6,6 +6,15 @@ on:
     # (06:00 JST) so the Notion page has its text written before we look for it.
     - cron: '15 21 * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'pending = fill empty 音声URL_A only (default). backfill_localhost = regenerate audio for any entry whose 音声URL_A still points at http://localhost:8765/...'
+        required: true
+        default: pending
+        type: choice
+        options:
+          - pending
+          - backfill_localhost
 
 permissions:
   contents: write
@@ -28,4 +37,5 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          BACKFILL_LOCALHOST: ${{ github.event.inputs.mode == 'backfill_localhost' }}
         run: bash tools/audio-filler.sh
