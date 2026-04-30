@@ -29,6 +29,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug secret shape (does not leak values)
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+        run: |
+          echo "NOTION_TOKEN       len=${#NOTION_TOKEN}       prefix=${NOTION_TOKEN:0:4}    suffix=${NOTION_TOKEN: -4}"
+          echo "NOTION_DATABASE_ID len=${#NOTION_DATABASE_ID} prefix=${NOTION_DATABASE_ID:0:8}  suffix=${NOTION_DATABASE_ID: -8}"
+          echo "ELEVENLABS_API_KEY len=${#ELEVENLABS_API_KEY} prefix=${ELEVENLABS_API_KEY:0:4} suffix=${ELEVENLABS_API_KEY: -4}"
+          echo "ELEVENLABS_VOICE_ID len=${#ELEVENLABS_VOICE_ID}"
+
       - name: Run audio filler
         env:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
