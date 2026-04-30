@@ -25,14 +25,17 @@ RELEASE_TAG="audio-store"
 
 notion_call() {
   local method="$1" url="$2" body="${3:-}"
-  local args=(-sS -X "$method" "$url"
-    -H "Authorization: Bearer $NOTION_TOKEN"
-    -H "Notion-Version: $NOTION_VERSION"
-    -H "Content-Type: application/json")
   if [ -n "$body" ]; then
-    args+=(--data-binary "$body")
+    printf '%s' "$body" | curl -sS -X "$method" "$url" \
+      -H "Authorization: Bearer $NOTION_TOKEN" \
+      -H "Notion-Version: $NOTION_VERSION" \
+      -H "Content-Type: application/json" \
+      --data-binary @-
+  else
+    curl -sS -X "$method" "$url" \
+      -H "Authorization: Bearer $NOTION_TOKEN" \
+      -H "Notion-Version: $NOTION_VERSION"
   fi
-  curl "${args[@]}"
 }
 
 ensure_release() {
@@ -99,14 +102,33 @@ generate_and_upload() {
 
 ensure_release
 
+# Build the filter via jq to keep UTF-8 of the Japanese property name clean
+# regardless of the host's locale / arg-passing quirks.
+audio_prop="音声URL_A"
 if [ "${BACKFILL_LOCALHOST:-false}" = "true" ]; then
   echo "Mode: backfill_localhost (re-process entries whose 音声URL_A contains 'localhost:8765')"
-  filter='{"filter":{"property":"音声URL_A","rich_text":{"contains":"localhost:8765"}},"page_size":50}'
+  filter=$(jq -nc --arg p "$audio_prop" --arg v "localhost:8765" \
+    '{filter:{property:$p,rich_text:{contains:$v}},page_size:50}')
 else
   echo "Mode: pending (default)"
-  filter='{"filter":{"property":"音声URL_A","rich_text":{"is_empty":true}},"page_size":50}'
+  filter=$(jq -nc --arg p "$audio_prop" \
+    '{filter:{property:$p,rich_text:{is_empty:true}},page_size:50}')
 fi
-resp=$(notion_call POST "https://api.notion.com/v1/databases/$NOTION_DATABASE_ID/query" "$filter")
+
+# Send the body via stdin to bypass any arg-encoding issues.
+resp=$(printf '%s' "$filter" | curl -sS -X POST \
+  "https://api.notion.com/v1/databases/$NOTION_DATABASE_ID/query" \
+  -H "Authorization: Bearer $NOTION_TOKEN" \
+  -H "Notion-Version: $NOTION_VERSION" \
+  -H "Content-Type: application/json" \
+  --data-binary @-)
+
+# Bail loudly if Notion returned an error.
+if [ "$(echo "$resp" | jq -r '.object // empty')" = "error" ]; then
+  echo "Notion query failed:" >&2
+  echo "$resp" | jq . >&2
+  exit 1
+fi
 
 count=$(echo "$resp" | jq '.results | length')
 echo "Found $count page(s) needing audio."
