@@ -7,7 +7,7 @@
 #   ELEVENLABS_API_KEY    sk_...
 #   ELEVENLABS_VOICE_ID   ElevenLabs voice id
 #   NOTION_TOKEN          Notion integration token (the same one in local .env)
-#   NOTION_DATABASE_ID    32-hex database id of リライトスクリプト
+#   NOTION_DATABASE_ID    32-hex database id of "Rewrite Script"
 #   GH_TOKEN              token with contents:write on this repo (Actions GITHUB_TOKEN works)
 #   GH_REPO               owner/repo (set by Actions: $GITHUB_REPOSITORY)
 
@@ -105,14 +105,22 @@ ensure_release
 # Build the filter via jq to keep UTF-8 of the Japanese property name clean
 # regardless of the host's locale / arg-passing quirks.
 audio_prop="音声URL_A"
+# 投稿先 == "ショート動画" のみ音声生成。X など他プラットフォームは
+# テキスト投稿のためスキップする（skill/MAIN.md の side-effect contract）。
 if [ "${BACKFILL_LOCALHOST:-false}" = "true" ]; then
   echo "Mode: backfill_localhost (re-process entries whose 音声URL_A contains 'localhost:8765')"
   filter=$(jq -nc --arg p "$audio_prop" --arg v "localhost:8765" \
-    '{filter:{property:$p,rich_text:{contains:$v}},page_size:50}')
+    '{filter:{and:[
+       {property:$p, url:{contains:$v}},
+       {property:"投稿先", select:{equals:"ショート動画"}}
+     ]}, page_size:50}')
 else
   echo "Mode: pending (default)"
   filter=$(jq -nc --arg p "$audio_prop" \
-    '{filter:{property:$p,rich_text:{is_empty:true}},page_size:50}')
+    '{filter:{and:[
+       {property:$p, url:{is_empty:true}},
+       {property:"投稿先", select:{equals:"ショート動画"}}
+     ]}, page_size:50}')
 fi
 
 # Send the body via stdin to bypass any arg-encoding issues.
@@ -139,6 +147,7 @@ fi
 
 success=0
 failed=0
+skipped=0
 
 mapfile -t pages < <(echo "$resp" | jq -c '.results[]')
 
@@ -152,8 +161,11 @@ for page in "${pages[@]}"; do
   echo "Page: $title ($page_id)"
 
   if [ -z "$text_a" ] || [ -z "$text_b" ]; then
+    # Upstream rewrite routine left this page partially populated. Not our job
+    # to fix, and not a real failure -- track separately so the run still goes
+    # green on a clean queue.
     echo "  skip: missing リライト本文 or リライト本文B"
-    failed=$((failed+1))
+    skipped=$((skipped+1))
     continue
   fi
 
@@ -169,18 +181,26 @@ for page in "${pages[@]}"; do
   url_a="https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/${id_a}.mp3"
   url_b="https://github.com/$GH_REPO/releases/download/$RELEASE_TAG/${id_b}.mp3"
 
+  # 音声URL_A / 音声URL_B are typed `url` in Notion -- send the raw URL, not a
+  # rich_text wrapper, otherwise Notion returns 400 ("expected to be url").
   patch=$(jq -nc \
     --arg a "$url_a" --arg b "$url_b" \
     '{properties:{
-      "音声URL_A":{rich_text:[{type:"text",text:{content:$a,link:{url:$a}}}]},
-      "音声URL_B":{rich_text:[{type:"text",text:{content:$b,link:{url:$b}}}]}
+      "音声URL_A":{url:$a},
+      "音声URL_B":{url:$b}
     }}')
 
-  notion_call PATCH "https://api.notion.com/v1/pages/$page_id" "$patch" >/dev/null
+  patch_resp=$(notion_call PATCH "https://api.notion.com/v1/pages/$page_id" "$patch")
+  if [ "$(echo "$patch_resp" | jq -r '.object // empty')" = "error" ]; then
+    echo "  PATCH failed:" >&2
+    echo "$patch_resp" | jq -r '"    " + (.code // "?") + ": " + (.message // "(no message)")' >&2
+    failed=$((failed+1))
+    continue
+  fi
   echo "  OK -- Notion updated."
   success=$((success+1))
 done
 
 echo "---"
-echo "Done. success=$success failed=$failed total=${#pages[@]}"
+echo "Done. success=$success failed=$failed skipped=$skipped total=${#pages[@]}"
 [ "$failed" -eq 0 ]

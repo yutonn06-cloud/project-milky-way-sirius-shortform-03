@@ -11,11 +11,11 @@
 #   ELEVENLABS_API_KEY=sk_...
 #   ELEVENLABS_VOICE_ID=...
 #   NOTION_TOKEN=secret_...           # internal integration token from notion.so/my-integrations
-#   NOTION_DATABASE_ID=<32-hex>        # database_id of リライトスクリプト (only needed for poll mode)
+#   NOTION_DATABASE_ID=<32-hex>        # database_id of "Rewrite Script" (only needed for poll mode)
 #
 # Setup:
 #   1. Create integration at https://www.notion.so/my-integrations → copy "Internal Integration Token"
-#   2. On the Notion DB「リライトスクリプト」page, click ⋯ → Connections → add the integration
+#   2. On the Notion DB "Rewrite Script" page, click ⋯ → Connections → add the integration
 #   3. NOTION_DATABASE_ID = the 32-hex string at the end of the DB URL (no hyphens)
 
 [CmdletBinding()]
@@ -79,8 +79,15 @@ function Get-PendingPages {
         $page = Invoke-Notion -Method Get -Url "https://api.notion.com/v1/pages/$cleanId"
         return @($page)
     }
+    # 投稿先 == "ショート動画" のみ音声生成。X など他プラットフォームは
+    # テキスト投稿のためスキップする（skill/MAIN.md の side-effect contract）。
     $bodyObj = @{
-        filter    = @{ property = "音声URL_A"; rich_text = @{ is_empty = $true } }
+        filter    = @{
+            and = @(
+                @{ property = "音声URL_A"; url = @{ is_empty = $true } },
+                @{ property = "投稿先"; select = @{ equals = "ショート動画" } }
+            )
+        }
         page_size = 50
     }
     $body = $bodyObj | ConvertTo-Json -Depth 10 -Compress
@@ -126,23 +133,14 @@ function New-ElevenLabsAudio($text, $variant) {
     }
 }
 
-function New-RichTextLink($url) {
-    return @{
-        rich_text = @(
-            @{
-                type = "text"
-                text = @{ content = $url; link = @{ url = $url } }
-            }
-        )
-    }
-}
-
 function Update-PageAudio($pageRef, $urlA, $urlB) {
     $cleanId = $pageRef -replace '-', ''
+    # 音声URL_A / 音声URL_B are typed `url` -- send the raw URL, not a
+    # rich_text wrapper, otherwise Notion returns 400 ("expected to be url").
     $body = @{
         properties = @{
-            "音声URL_A" = New-RichTextLink $urlA
-            "音声URL_B" = New-RichTextLink $urlB
+            "音声URL_A" = @{ url = $urlA }
+            "音声URL_B" = @{ url = $urlB }
         }
     } | ConvertTo-Json -Depth 10 -Compress
     $null = Invoke-Notion -Method Patch -Url "https://api.notion.com/v1/pages/$cleanId" -JsonBody $body
