@@ -1,0 +1,59 @@
+name: Sources Cache
+
+# Daily fetch of the 4 authentic-source RSS feeds, published as a release
+# asset that the cloud rewrite routines can read via WebFetch.
+#
+# Why this exists: Claude Code's WebFetch (the tool the cloud sandbox uses)
+# blocks .go.jp / .or.jp / news.yahoo.co.jp, so the sns-rewrite and
+# sns-rewrite-x routines cannot fetch the RSS feeds themselves. GitHub
+# Actions Linux runners CAN reach those feeds, and github.com release
+# downloads ARE allowed by Claude WebFetch -- so we cache here, read there.
+
+on:
+  schedule:
+    # 20:45 UTC = 05:45 Asia/Tokyo. 15min before the ShortsVideo cron (06:00),
+    # 45min before the X cron (06:30). Both routines read the asset that this
+    # workflow just refreshed.
+    - cron: '45 20 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sources-cache
+  cancel-in-progress: false
+
+jobs:
+  cache:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sources
+        run: python3 tools/fetch-sources.py > sources_today.json
+
+      - name: Validate
+        run: |
+          jq -e 'length > 0' sources_today.json
+          jq -r 'group_by(.source)[] | "\(.[0].source): \(length) items"' sources_today.json
+          echo "total: $(jq 'length' sources_today.json) items"
+
+      - name: Ensure release exists
+        run: |
+          if ! gh release view sources-cache --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release create sources-cache \
+              --repo "$GH_REPO" \
+              --title "Sources cache" \
+              --notes "Auto-managed daily RSS cache (4本のauthentic-source RSS、各上位3件)。Cloud routinesが WebFetch で読む先。Do not edit manually."
+          fi
+
+      - name: Upload cache asset
+        run: gh release upload sources-cache sources_today.json --repo "$GH_REPO" --clobber
+
+      - name: Print public URL
+        run: |
+          echo "Cache URL: https://github.com/$GH_REPO/releases/download/sources-cache/sources_today.json"
