@@ -1,3 +1,5 @@
+<!-- ⏸ 【停止中・休眠（2026-06-04〜）】 X パイプラインは停止（短尺専念）。claude.ai routine `SNS Rewrite Daily X` は enabled:false。本プロンプトは削除せず休眠保持。復活時は本コメント削除 + routine を enabled:true に戻す。 -->
+
 クローン済みリポジトリのルート (cwd) で動作してください。本日分のX（Twitter）長文リライトを1本、自律モードで生成します。
 
 **Single source of truth for rules:**

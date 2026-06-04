@@ -54,7 +54,7 @@
 
 **tone / manner：**
 - 敬体（です・ます）基調・危機感/覚醒/断定で読者を揺さぶる・冒頭 1-2 文に強フック・60 秒で読み切れる
-- 共感 → 視点転換 → 締め の感情アーク。短尺 300-400字 / X 400-500字 3 型（統計恐怖/暴露怒り/時間切れ）
+- 共感 → 視点転換 → 締め の感情アーク。短尺 300-400字（現運用の主軸）／ ~~X 400-500字 3 型（統計恐怖/暴露怒り/時間切れ）~~ ⏸**X は 2026-06-04 停止・休眠**（短尺専念。仕様は sns-rewrite-x/SKILL.md に温存）
 
 **Sirius 固有 forbidden_expressions（全文は project-constitution.json::brand_voice）：**
 - 捏造引用（実在しない専門家・数値・研究の創作）/ 特定個人への誹謗中傷（構造批判は可）/ 医療・健康・金融の有害な断定助言 / PF 規約違反（差別・暴力扇動）/ 出典偽装
@@ -69,7 +69,7 @@
 | Phase | agent | 役割 | 昇格状態 |
 |---|---|---|---|
 | **1** | sns_rewrite（skill）| ショート動画リライト 300-400字敬体 A/B | sirius-internal |
-| **1** | sns_rewrite_x（skill）| X 400-500字 3 型 A/B/C | sirius-internal |
+| **1** | sns_rewrite_x（skill）⏸ | X 400-500字 3 型 A/B/C | sirius-internal・**停止中/休眠（2026-06-04〜・短尺専念）** |
 | **1** | cloud_routine_orchestrator | 日次自律オーケストレーション（06:00 JST）| sirius-internal |
 | **2** | platform_subskill | Threads/YouTube/Reels 拡張 | planned |
 

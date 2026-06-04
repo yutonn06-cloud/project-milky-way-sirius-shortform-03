@@ -7,7 +7,9 @@
 | Sub-skill | Path | 投稿先 | Cloud routine | Cron | Trigger prompt |
 |---|---|---|---|---|---|
 | Short video | `.claude/skills/sns-rewrite/SKILL.md` | `ショート動画` | `trig_0146gAGPHZ44FndRHDcuKBjm` (`SNS Rewrite Daily`) | 06:00 JST daily | [trigger-prompt.md](../../trigger-prompt.md) |
-| X (Twitter) | `.claude/skills/sns-rewrite-x/SKILL.md` | `X` | （未登録 / manual-only） | — | [trigger-prompt-x.md](../../trigger-prompt-x.md) |
+| X (Twitter) ⏸**停止中** | `.claude/skills/sns-rewrite-x/SKILL.md` | `X` | `trig_01LYVZBHQSWRjyUcg2NVyPRM` (`SNS Rewrite Daily X`) **`enabled:false`** | ~~06:30 JST~~ 停止 | [trigger-prompt-x.md](../../trigger-prompt-x.md) |
+
+> **⏸ X は 2026-06-04 に停止（短尺専念）。** skill / prompt / routine は削除せず**休眠保持**。本衛星の運用対象は当面ショート動画のみ。詳細・復活手順 → [trigger-prompt-x.md](../../trigger-prompt-x.md) 冒頭・`sns-rewrite-x/SKILL.md` 冒頭バナー・`docs/handoffs/2026-06-04-cosmos-sync-handoff.md`。
 
 ## アーキテクチャ
 

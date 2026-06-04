@@ -38,7 +38,7 @@ Daily-scheduled cloud agent that generates A/B SNS rewrite content and writes to
 .
 ├── .env                       # local creds (gitignored — never committed)
 ├── trigger-prompt.md          # short-video routine prompt (cron 06:00 JST)
-├── trigger-prompt-x.md        # X long-form routine prompt (manual)
+├── trigger-prompt-x.md        # X long-form routine prompt (⏸ dormant since 2026-06-04 — short-video only)
 ├── .claude/
 │   └── skills/                # canonical Claude Code skill location
 │       ├── README.md          # orchestrator + Notion DB schema
@@ -122,7 +122,7 @@ The Notion DB `Rewrite Script` (parent: `Rewrite for Short Video`) collects rows
 
 | View name | Purpose | Filter |
 |---|---|---|
-| `X — Pending Review` | X long-form awaiting review | `投稿先 = X AND 採用 = 未判定` |
+| `X — Pending Review` ⏸ | X long-form awaiting review (X paused 2026-06-04; view retained for the dormant backlog) | `投稿先 = X AND 採用 = 未判定` |
 | `Short Video — Pending Review` | Short-video awaiting review (includes audio URLs) | `投稿先 = ショート動画 AND 採用 = 未判定` |
 | `Approved (Post Candidates)` | Anything marked as A案 / B案 / 両方 | `採用 IN (A案, B案, 両方)` |
 | `Published (Archive)` | Posts that have shipped | `ステータス = 使用済み` |

@@ -12,8 +12,9 @@ name: Sources Cache
 on:
   schedule:
     # 20:45 UTC = 05:45 Asia/Tokyo. 15min before the ShortsVideo cron (06:00),
-    # 45min before the X cron (06:30). Both routines read the asset that this
-    # workflow just refreshed.
+    # which reads the asset that this workflow just refreshed.
+    # (The X cron at 06:30 was disabled 2026-06-04 — satellite now focuses on
+    #  short-video only. The X routine/skill are kept dormant, not deleted.)
     - cron: '45 20 * * *'
   workflow_dispatch:
 

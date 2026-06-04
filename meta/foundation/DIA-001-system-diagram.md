@@ -44,7 +44,7 @@ User（司令官・SNS 投稿 + Notion 採用判断）
        └─ Work 層（衛星内）：
             cloud_routine_orchestrator（日次起動）
               ├─ sns_rewrite（短尺 skill）
-              ├─ sns_rewrite_x（X skill）
+              ├─ sns_rewrite_x（X skill）⏸停止中/休眠（2026-06-04〜）
               └─ tools/（決定論：音声/RSS/Notion POST）
 ```
 
@@ -60,7 +60,7 @@ User（司令官・SNS 投稿 + Notion 採用判断）
                                                               │
                                               [人間] Notion 採用カラム判断 ─→ SNS 投稿(手動)
 
-[手動] trigger-prompt-x → sns-rewrite-x(3型) → Notion REST POST(投稿先=X)
+[⏸停止/休眠 2026-06-04〜] trigger-prompt-x → sns-rewrite-x(3型) → Notion(投稿先=X)  ※短尺専念・skill/prompt 温存・routine enabled:false
 ```
 
 ## 4. 状態機械（Notion 採用 / ステータス）

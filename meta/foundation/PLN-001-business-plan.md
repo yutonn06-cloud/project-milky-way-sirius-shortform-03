@@ -27,10 +27,10 @@ last_updated: 2026-06-04
 
 | 段階 | 内容 | 時期 |
 |---|---|---|
-| 現状 | コンテンツエンジン日次稼働（短尺 cloud routine + GHA 音声）+ X 手動 | 稼働中 |
+| 現状 | コンテンツエンジン日次稼働（短尺 cloud routine + GHA 音声）。~~+ X 手動~~ ⏸**X 停止・休眠（2026-06-04〜・短尺専念）** | 稼働中（短尺のみ）|
 | 次 | マネタイズ着手（広告 / アフィリ動線の本文挿入方針・Class 2 ゲート）| Phase B |
 | 次 | platform 拡張（Threads / YouTube / Reels の sub-skill 追加）| Phase 2 |
-| 将来 | X パイプライン cron 化 + エンゲージ計測の KPI 化 | Phase B 以降 |
+| 将来 | ~~X パイプライン cron 化~~（⏸X 停止・復活時に再検討）+ エンゲージ計測の KPI 化 | Phase B 以降 |
 
 ## 4. KPI
 

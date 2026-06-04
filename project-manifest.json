@@ -51,7 +51,7 @@
 
   "agents": [
     {"id": "sns_rewrite", "phase_introduced": 1, "role": "ショート動画リライト SOP（.claude/skills/sns-rewrite・300-400字敬体 A/B）", "scope": "sirius-internal (skill)"},
-    {"id": "sns_rewrite_x", "phase_introduced": 1, "role": "X 長文リライト SOP（.claude/skills/sns-rewrite-x・400-500字 3型 A/B/C）", "scope": "sirius-internal (skill)"},
+    {"id": "sns_rewrite_x", "phase_introduced": 1, "role": "X 長文リライト SOP（.claude/skills/sns-rewrite-x・400-500字 3型 A/B/C）", "scope": "sirius-internal (skill)", "status": "dormant", "status_note": "2026-06-04 停止・休眠（短尺専念）。routine trig_01LYVZBHQSWRjyUcg2NVyPRM = enabled:false。skill/prompt は削除せず温存。復活は司令官決定 + handoff。"},
     {"id": "cloud_routine_orchestrator", "phase_introduced": 1, "role": "日次自律オーケストレーション（trigger-prompt.md・cloud routine 06:00 JST）", "scope": "sirius-internal"},
     {"id": "platform_subskill", "phase_introduced": 2, "role": "将来 platform 拡張（Threads/YouTube/Reels の sub-skill 追加パターン）", "scope": "sirius-internal (planned)"}
   ],

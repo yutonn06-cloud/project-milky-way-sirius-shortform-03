@@ -138,7 +138,7 @@
   "deferred_v0_2_items": {
     "pg_activation_timing": "PG 役の割付 + 起動トリガー（I5/Phase B で確定）",
     "monetization_budget": "マネタイズ着手時の収益連動予算枠（budget-policy.json revenue_budget_transition_plan）",
-    "x_cron_wiring": "X パイプライン（sns-rewrite-x）の cron 配線（現状手動）"
+    "x_cron_wiring": "★保留→停止：X パイプライン（sns-rewrite-x）は 2026-06-04 に停止・休眠（短尺専念・司令官決定）。routine trig_01LYVZBHQSWRjyUcg2NVyPRM = enabled:false。cron 配線は復活時に再検討。"
   },
 
   "related_documents": {
