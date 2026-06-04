@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "scope-boundary",
+  "_comment_meta": "★Sirius 衛星 governance 3/3 のうち 2 番目 — 衛星活動範囲の境界定義",
+  "_comment_class": "★Class 3 変更 — scope_in への新規資産追加・scope_out からの引き上げは Constitutional Judge 明示承認必須",
+  "_comment_spec": "★規定出典: REQ-COSMOS-011 v1.2 §6-3 Phase C2 / §8-5（育成型 Phase A/B/C）。",
+  "_comment_filling_status": "★COSMOS 移行 Step 6（案 Y 手動充填）v0.1 初版（CR-COSMOS-20260604-141）。Vega/Thuban CR-008/067 同型。**Sirius の最大差分＝scope_in 0 件（genre 特異物の艦隊共通化が有害ゆえ汚染回避・司令官決定 4・extraction §3-1）**。",
+
+  "schema_version": "0.1",
+  "satellite_id": "project-milky-way-sirius-shortform-03",
+  "celestial_name": "Milky Way > Sirius",
+  "inherits_from": "cosmos-core/registry/migration-extractions/20260604-sirius-shortform-extraction.md (Phase A 完了レポート)",
+  "last_updated": "2026-06-04",
+  "updated_by_agent": "central-claude",
+  "approval_status": "step6-v0.1-pending-constitutional-judge",
+
+  "mode_declaration": {
+    "migration_mode": "育成型 / ★既稼働 operational（リーン巻きつけ）",
+    "growth_strategy": "育成型 (CR-COSMOS-20260604-140)",
+    "phase_status": "Phase A 登録層完了 (2026-06-04・CR-140) → Phase 0 移設 + GitHub rename + Step 5/6/I5 scaffold 充填 (CR-141)。育成型 Phase B 未着手。",
+    "scope_boundary_design_principle": "REQ-011 v1.2 §6-3 Phase C2 規定に準拠。**Sirius は D 即時昇格 0 件のため scope_in は空**。理由＝genre 特異物（怪しい系の危機訴求/煽りレトリック）の艦隊共通化は有害（他衛星への汚染）＝scope_in=0 で汚染遮断（司令官決定 4）。R/K/Q 区分は全て衛星実体側で継続育成（scope_out 該当）。"
+  },
+
+  "scope_in": {
+    "_comment": "★Phase A で COSMOS 標準層へ昇格済の D 区分。**Sirius は D 即時昇格 0 件**（migration-extractions §3-1）。genre 特異物は艦隊共通化が有害（汚染回避）。Thuban（Notion 固有で D=0）とは別理由・結論は同じ。",
+    "promoted_assets_count": 0,
+    "promoted_assets": [],
+    "rationale": "育成型『捨てない』原則下で全資産を衛星内保持。即時物理昇格 0 件は『怪しい系 genre 特異物の艦隊共通化が有害（汚染回避）』の反映（extraction §3 冒頭・司令官決定 4 = scope_in=0）。"
+  },
+
+  "scope_out": {
+    "_comment": "★衛星実体側で継続育成中の R/K/Q 区分（extraction §3-2/§3-3/§3-4・計 11 件）。Phase C 昇格判定 4 基準達成時に対象資産単位で scope_in へ移行。",
+    "r_satellite_internal_refactor_count": 4,
+    "r_items": [
+      {"id": "R1", "name": "WAT 3 層（Workflows/Agents/Tools・root CLAUDE.md）", "universality_score": 0.85, "review_cycle": "Phase B / Thuban WAT R1 と統合判定", "note": "native→MVD6 翻訳メタパターンは 0.85（Vega+Thuban+Sirius 3 衛星実績）= Phase B 再評価"},
+      {"id": "R2", "name": "skills 2 種 + platform 分岐（投稿先カラム）", "universality_score": 0.45, "review_cycle": "Phase B", "note": "マルチ platform sub-skill パターンが他衛星 2 件で発生時に判定"},
+      {"id": "R3", "name": "2 段分離パイプライン（cloud 制約回避）", "universality_score": 0.55, "review_cycle": "同型サンドボックス制約衛星 2 件時", "note": "OPR-001 + DIA-001 に構造として記録"},
+      {"id": "R4", "name": "RSS proxy 層（GHA・ブロック source の CI proxy）", "universality_score": 0.5, "review_cycle": "同型制約衛星時", "note": "DIA-001 外部接続 + OPR-001 へ写像"}
+    ],
+    "k_satellite_internal_retain_count": 5,
+    "k_items": [
+      {"id": "K1", "name": "原文コーパス約 450 本（skill/references/ ch/s/t/v）+ index", "scope_decision": "衛星固有コンテンツ資産として保持・genre 特異", "future_promotion_candidate": "—"},
+      {"id": "K2", "name": "Notion DB schema（16 property）", "scope_decision": "衛星固有データ層として保持・Notion-SSoT", "future_promotion_candidate": "—"},
+      {"id": "K3", "name": "ターゲット 10 ペルソナ + 文体軸 + X 3 型", "scope_decision": "brand_voice へ写像（genre native）", "future_promotion_candidate": "—"},
+      {"id": "K4", "name": "tools/（audio-filler / audio-proxy / fetch-sources / notion-create-page）", "scope_decision": "衛星固有実装ツールとして保持", "future_promotion_candidate": "—"},
+      {"id": "K5", "name": ".github/workflows/（sources-cache / audio-filler）", "scope_decision": "衛星固有 CI として保持", "future_promotion_candidate": "—"}
+    ],
+    "q_pending_review_count": 2,
+    "q_items": [
+      {"id": "Q1", "name": "実 RSS 出典整合 SOP（cite_authentic_source）", "review_cycle": "第 2 コンテンツ衛星の参照需要時", "decision_pending": "『実出典付与 + 捏造禁止』は cross-domain 価値の片鱗があるが genre 信頼性文脈と不可分（出典が煽りの免罪符にならない本文裏取り）→ 汎用化保留。衛星内に compliance ハード品質ゲートとして焼く。"},
+      {"id": "Q2", "name": "cloud routine 自律実行モデル（確認ゼロ・失敗時 graceful fail）", "review_cycle": "Phase B", "decision_pending": "Vega cloud routine / Thuban 将来 cloud routine との運用パターン重複。無人スケジュール実行の艦隊共通作法として再評価。"}
+    ]
+  },
+
+  "boundary_enforcement": {
+    "scope_in_additions_authority": {
+      "rule": "scope_in への新規資産追加は Class 3 CR が必須（Phase C 昇格判定 4 基準達成時のみ・対象資産単位）。★ genre 特異物は汚染回避のため原則 scope_in に上げない。",
+      "approver": "Constitutional Judge (司令官・User 直接)",
+      "approval_mechanism": "30 秒承認ゲート + Class 3 CR 発番 + decisions-log エントリ"
+    },
+    "scope_out_assets_isolation": {
+      "rule": "scope_out 資産（特に genre 特異の原文コーパス・brand_voice・skills）は衛星実体内に閉じる。COSMOS 司令塔からの自律参照は禁止（reference pointer のみ許可）。",
+      "monitoring_agent": "CG (hash 監査) + HQ Synthesizer (Daily Digest 異常検知)"
+    },
+    "boundary_violation_response": {
+      "rule": "genre 特異物が COSMOS 標準層に予期せず複製された場合、Level 2 エスカレーション（艦隊汚染）。",
+      "rollback_method": "誤複製ファイルの削除 + dependency-map.json related_documents 修正 + decisions-log エントリ"
+    }
+  },
+
+  "phase_c_promotion_readiness": {
+    "promotion_criteria_4_items": [
+      "1. 他衛星 2 件以上で同種パターンへの参照需要が確認できる",
+      "2. 衛星内で 3 ヶ月以上安定運用された",
+      "3. 抽象化作業（衛星固有 / genre 要素の除去）が完了している",
+      "4. Constitutional Judge の昇格承認（Class 3 CR スタンプ）"
+    ],
+    "earliest_readiness_assets": [
+      "WAT → MVD 6 翻訳メタパターン（0.85・Vega+Thuban+Sirius 3 衛星実績で基準 1 達成・標準化レポート §5）= migration-patterns/ への登録を Phase B で判定",
+      "2 段分離（cloud 制約回避）/ RSS proxy パターン = 同型サンドボックス制約衛星の発生時"
+    ]
+  },
+
+  "related_documents": {
+    "global_constitution": "cosmos-core/constitution/global-constitution.json (v1.0)",
+    "project_constitution": "./project-constitution.json (v0.1)",
+    "planet_governor_config": "./planet-governor-config.json (v0.1)",
+    "budget_policy": "./budget-policy.json (v0.1)",
+    "migration_protocol": "# COSMOS — 既存プロジェクト移行プロトコル 要件定義書 v1.2.md §6-3 Phase C2 / §8-5",
+    "phase_a_extraction_report": "cosmos-core/registry/migration-extractions/20260604-sirius-shortform-extraction.md",
+    "standardization_report": "cosmos-core/registry/migration-standardizations/20260604-sirius-shortform-standardization.md",
+    "satellite_link": "cosmos-core/registry/satellites/sirius-link.json",
+    "dependency_map": "cosmos-core/registry/dependency-map.json#/satellite_registry/milky-way-sirius-shortform-03"
+  },
+
+  "change_record": [
+    {
+      "cr_id": "CR-COSMOS-20260604-141",
+      "version": "0.1",
+      "created_at": "2026-06-04",
+      "phase": "Phase 4-post / COSMOS 移行 Step 6 稼働開始準備（governance/ 配下 3 ファイル起草・案 Y 手動充填）",
+      "drafted_by_agent": "central-claude (案 Y 手動充填)",
+      "scope": "scope_in 0 件（genre 特異物の汚染回避）+ R4/K5/Q2（extraction 11 件）を scope_out + Phase C 昇格判定 4 基準連動",
+      "approval_status": "Constitutional Judge 正式承認は Phase B 月次レビュー 3 サイクル完了後（genre 方針自体は 2026-06-04 承認済）",
+      "note": "初版起草（Vega/Thuban 同型・案 Y 手動充填）。**Sirius は D 即時昇格 0 件のため scope_in は空**（genre 特異物の艦隊共通化が有害＝汚染回避・司令官決定 4）。R/K/Q 11 件は scope_out で衛星実体側育成継続。"
+    }
+  ]
+}

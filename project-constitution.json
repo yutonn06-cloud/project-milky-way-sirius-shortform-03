@@ -1,0 +1,122 @@
+{
+  "_comment_meta": "★MVD 2/6: project-constitution.json — global-constitution.json 継承の Sirius（SNS Rewrite Automation）衛星固有憲法",
+  "_comment_class": "★Class 3 変更 — Constitutional Judge の明示承認必須・方針変更時のみ更新",
+  "_comment_spec": "★規定出典: bubbly-exploring-wozniak.md セクション 13-2（10 キー全て必須・空欄禁止）",
+  "_comment_audit": "★CG が hash 監査・焼き込みマスター台帳 cosmos-core/registry/constraints-ledger.json と整合",
+  "_comment_filling_status": "★COSMOS 移行 Step 5（案 Y 手動充填）v0.1 初版（CR-COSMOS-20260604-141）。設計 = migration-standardizations/20260604-sirius-shortform-standardization.md §2 MVD2。★ genre 統制（政治/陰謀/煽り）= ジャンル固有 brand_voice（Vega 反煽りルール継承せず）。genre 方針は司令官 AskUserQuestion『ジャンル固有・誠実リスク台帳』採択 + 実行許可で承認済（2026-06-04）。正式 v1.0 Constitutional Judge 承認は Phase B 完了後。",
+
+  "inherits_from": "cosmos-core/constitution/global-constitution.json (v1.0)",
+
+  "philosophy_constraints": {
+    "_comment": "★4 哲学（Philosophy 1-4）の衛星特化適用ルール（必須）。COSMOS Philosophy 番号は Vega/Thuban 同型。",
+    "philosophy_1_human_judgment_first": "SNS 投稿は人間（司令官）専任。Notion 採用カラム（未判定 → A案/B案/両方/不採用）が人間レビューゲート。cloud routine は生成 + Notion 書込みまで自律（確認ゼロ）だが、公開は人間ゲートを通る。自動投稿 禁止。",
+    "philosophy_2_dimensional_evolution": "★既稼働 operational から次元上昇 Phase 1（autonomy 30%）として登録（リーン巻きつけ）。段階展開 = (1) コンテンツエンジン安定運用（現状）→ (2) マネタイズ着手（広告/アフィリ）→ (3) platform 拡張（Threads/YouTube/Reels の sub-skill 追加）。",
+    "philosophy_3_burn_in_documentation": "WAT（Workflows / Agents / Tools）を root CLAUDE.md / .claude/skills/ / workflows/ に直接埋込。原文コーパス約 450 本（skill/references/）+ 出典整合 SOP（workflows/cite_authentic_source.md）+ Notion 7 日 dedup でドリフト防止。SoT = root CLAUDE.md（WAT）+ skills。",
+    "philosophy_4_budget_consciousness": "Sirius は通貨予算を基本ゼロ運用（Vega 同型・session 占有率代替）。実費は ElevenLabs TTS（音声合成・少額・司令官 API key）のみ＝GHA 06:15 で日次音声生成。生成コストは小さく承認ゲート不要だが、TTS 失敗時は Notion ステータス=失敗で graceful。70/25/5 三層配分は session 占有率に適用。",
+    "satellite_specific_disciplines": {
+      "_comment": "★衛星固有規律（global 化対象外・sirius-internal-only として記録・モデルケース観点で global 化を構造的に阻止）。genre 特異物は scope_in=0 で艦隊汚染を遮断。",
+      "genre_native_rhetoric": {
+        "description": "怪しい系（自己啓発/スピリチュアル/陰謀/政治）の危機訴求・覚醒・感情訴求レトリックを vertical 固有作法として許容（brand_voice 参照）。Vega の反煽りルールは継承しない（真逆の vertical）。",
+        "scope": "sirius-internal-only",
+        "reference": "brand_voice / .claude/skills/sns-rewrite / sns-rewrite-x"
+      },
+      "citation_integrity_hard_gate": {
+        "description": "出典整合 SOP（実 RSS 4 source × 3 item → A/B 別媒体・本文で裏取り・捏造引用 絶対禁止）をハード品質ゲート化。出典は煽りの免罪符にしない＝断定的主張は実出典 or 本文の論理で裏取り。",
+        "scope": "sirius-internal-only（汎用化候補だが genre 信頼性文脈と不可分・Q1 留保）",
+        "reference": "workflows/cite_authentic_source.md / reference/authentic-sources.md"
+      },
+      "two_stage_sandbox_split": {
+        "description": "クラウドサンドボックス制約回避の 2 段分離（cloud routine = テキスト生成 + Notion 書込み / GHA = ElevenLabs 音声 + Notion patch〔api.elevenlabs.io がサンドボックスでブロックされるため〕+ GHA = RSS proxy〔.go.jp/.or.jp が cloud WebFetch でブロックされるため〕）。",
+        "scope": "sirius-internal-only（同型サンドボックス制約衛星で再評価）",
+        "reference": ".github/workflows/audio-filler.yml / sources-cache.yml"
+      }
+    }
+  },
+
+  "brand_voice": {
+    "_comment": "★トーン・マナー・禁止表現（必須）。★ Sirius は『怪しい系』vertical 固有 brand_voice ＝ Vega（煽り/感情操作を禁止）とは真逆。危機訴求・覚醒・感情訴求を許容し、禁止は捏造・個人誹謗・有害助言に限定。",
+    "tone": "敬体（です・ます）を基調に、危機感・覚醒・断定で読者の不安と気づきを揺さぶる。冒頭 1-2 文に強いフック。60 秒で読み切れる。怪しい系（自己啓発/スピリチュアル/陰謀/政治）vertical の語り口。",
+    "manner": "共感 → 視点転換 → 締め の感情アーク。短尺は 300-400 字敬体。X は 400-500 字・3 型（統計恐怖 / 暴露怒り / 時間切れ）。断定的主張は実 RSS 出典 or 本文の論理で裏取り（出典を煽りの免罪符にしない）。",
+    "forbidden_expressions": [
+      "捏造引用（実在しない専門家・数値・研究の創作。X 3 型の権威引用は必ず実在の人物・出典）",
+      "特定個人への誹謗中傷（構造・制度批判は可・個人攻撃は不可）",
+      "医療・健康・金融の具体的・断定的助言で読者に実害を与える表現（情報提供の範囲を超えない）",
+      "プラットフォーム規約違反表現（差別・暴力扇動・ヘイト）",
+      "出典の偽装（出典 URL と本文主張の不一致・無関係出典の貼付）"
+    ],
+    "_forbidden_note": "★ Vega の forbidden（『今すぐ』等の煽り語 / 感情操作）は本衛星では禁止しない（genre 固有・vertical 親和）。禁止は捏造・個人誹謗・有害助言・規約違反・出典偽装に限定（誠実リスク台帳）。完全版は Phase B 月次レビューで brand_voice を精緻化。"
+  },
+
+  "target_audience": {
+    "_comment": "★ターゲット顧客の定義（必須）",
+    "definition": "ショート動画 + X の視聴者で、人生に疑問を抱く 40-50 代女性 / 人生の岐路にある会社員 / スピリチュアルに関心があるが周囲に言えない層。自己啓発・スピリチュアル・社会の覚醒系コンテンツに惹かれる『怪しい系』vertical のオーディエンス。10 ペルソナ（skills 内定義）。"
+  },
+
+  "risk_management": {
+    "_comment": "★衛星固有リスクと対策（必須・ペアで記述）。★ genre リスクが本衛星の核心。",
+    "risks": [
+      {
+        "risk": "誤情報の拡散（陰謀・政治テーマで事実誤認を広める）",
+        "mitigation": "出典整合 SOP（実 RSS 出典 + 本文裏取り）+ 捏造引用禁止 + 断定の根拠明示。検証不能な主張は事実として提示しない。"
+      },
+      {
+        "risk": "アカウント BAN / シャドウバン（プラットフォーム規約違反・煽り過剰）",
+        "mitigation": "各 PF 規約遵守 + 投稿前の人間ゲート（Notion 採用判断）+ 差別/暴力扇動の禁止。規約変更を月次で追従。"
+      },
+      {
+        "risk": "捏造引用（実在しない権威・数値の創作）",
+        "mitigation": "X 3 型の権威引用は実在の人物・出典に限定。記憶が不確かなら別の実在人物に差し替え（skills に明記済）。"
+      },
+      {
+        "risk": "政治的偏向による炎上・ブランド毀損",
+        "mitigation": "政治テーマは構造・制度批判に留め、特定個人・党派への攻撃を回避。公平性に配慮。"
+      },
+      {
+        "risk": "プラットフォーム規約変更による運用停止",
+        "mitigation": "月次レビューで各 PF（短尺動画 / X）の AI 生成・政治コンテンツ規約を追従。"
+      },
+      {
+        "risk": "OneDrive 同期競合（移設前の旧リスク）",
+        "mitigation": "CR-141 で projects/ へ移設済（OneDrive 外）＝解消。"
+      }
+    ]
+  },
+
+  "compliance_requirements": {
+    "_comment": "★法的・規約上の制約（必須）",
+    "items": [
+      "各配信プラットフォーム規約（ショート動画 PF / X〔旧 Twitter〕）の遵守",
+      "政治コンテンツの開示・公平性配慮（特定党派の宣伝・誹謗の回避）",
+      "生成 AI コンテンツの開示（プラットフォームが要求する場合）",
+      "出典整合（実 RSS 出典 SOP をハード品質ゲート化・A/B 別媒体・捏造引用 絶対禁止・本文裏取り）",
+      "医療・健康・金融・スピリチュアル系表現の責任（具体的・断定的助言を避け情報提供の範囲に留める）",
+      "著作権（原文コーパス・引用素材・RSS 出典の適正利用）",
+      "外部ツール各規約（Notion / ElevenLabs / GitHub Actions）"
+    ]
+  },
+
+  "external_execution_limits": {
+    "_comment": "★外部実行の権限境界（Level 0/1/2 の明示・必須）。標準化レポート §3 準拠。",
+    "level_0_allowed": [
+      "ローカルファイル生成（.tmp/ キャッシュ / drafts）",
+      "RSS fetch（GHA proxy 経由）/ 原文選択（skill/references・Notion 7 日 dedup の read）",
+      "A/B リライト生成（ローカル・cloud routine 内）",
+      "Notion read（DB 参照・dedup チェック）"
+    ],
+    "level_1_allowed": [
+      "Notion write（REST POST 新規ページ / PATCH 音声 URL・idempotent 寄り）",
+      "ElevenLabs TTS（音声合成・実費少額・GHA 06:15）",
+      "GitHub Actions 実行（sources-cache / audio-filler）"
+    ],
+    "level_2_allowed": [
+      "SNS 投稿 API（人間専任・現状は人間コピペ / 手動・自動投稿は封印）"
+    ],
+    "_human_gates": "SNS 投稿 = 人間専任（Philosophy 1）。Notion 採用カラム（A案/B案/両方/不採用）が公開前の人間レビューゲート。cloud routine の生成 + Notion 書込みは自律（確認ゼロ・失敗時 Notion ステータス=失敗で graceful）。"
+  },
+
+  "level_2_information_flag": false,
+
+  "budget_policy_inheritance": "global-constitution.json budget_policy v1.0 を継承。Sirius は通貨予算を基本ゼロ運用（Vega 同型・session 占有率代替）。実費は ElevenLabs TTS（音声・少額・司令官 API key）のみ。詳細 = governance/budget-policy.json。",
+
+  "last_judge_approval": "COSMOS 移行 Step 5 v0.1 初版（CR-COSMOS-20260604-141）。genre 方針（ジャンル固有 brand_voice・誠実 compliance/risk・scope_in=0）は司令官 = Constitutional Judge の AskUserQuestion 採択 + 実行許可で承認済（2026-06-04・会話内 GO・memory [[control-tower-user-direct]] 同型）。正式 v1.0 焼き込み確定は Phase B 月次レビュー 3 サイクル完了後。"
+}

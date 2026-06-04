@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "planet-governor-config",
+  "_comment_meta": "★Sirius 衛星 governance 3/3 のうち 1 番目 — Planet Governor 動作設定",
+  "_comment_class": "★Class 3 変更 — 自律度・閾値変更は Constitutional Judge 明示承認必須。phase 進行に伴う自動昇格は Class 2",
+  "_comment_spec": "★規定出典: REQ-COSMOS-011 v1.2 §6-2 I3 / §6-3 Phase C1 / §7。Phase 1 既定 = 自律度 30% / 閾値 50%（QLA Critical Review）/ 70%（30 秒承認ゲート）",
+  "_comment_filling_status": "★COSMOS 移行 Step 6（案 Y 手動充填）v0.1 初版（CR-COSMOS-20260604-141）。Vega/Thuban 同型。",
+
+  "schema_version": "0.1",
+  "satellite_id": "project-milky-way-sirius-shortform-03",
+  "celestial_name": "Milky Way > Sirius",
+  "inherits_from": "cosmos-core/constitution/global-constitution.json (v1.0) + project-constitution.json (v0.1)",
+  "last_updated": "2026-06-04",
+  "updated_by_agent": "central-claude",
+  "approval_status": "step6-v0.1-pending-constitutional-judge",
+
+  "governor_assignment": {
+    "_comment": "★PG（Planet Governor）の実エージェント割当。Sirius の WAT は cloud routine 内で完結する単純な直列フロー（標準化レポート §3）。PG 割付は I5/Phase B で確定。",
+    "primary_pg_agent_id": "TBD (I5/Phase B で確定・暫定 commander-direct)",
+    "primary_pg_phase_introduced": "TBD",
+    "primary_pg_status_at_init": "not-yet-activated",
+    "interim_governor_assignment": {
+      "interim_mode": "commander-direct",
+      "interim_responsible_role": "Strategic Commander (司令官・User 直接) + HQ Synthesizer + GIH",
+      "transition_trigger": "Phase B で PG 役の割付確定時"
+    },
+    "sbg_assignment": {
+      "_comment": "★SBG（Satellite Budget Guardian）。Sirius は通貨予算ゼロ運用（Vega 同型）= session-occupancy-based。budget-policy.json と連動。",
+      "sbg_mode": "session-occupancy-based (Vega 同型・通貨予算ゼロ運用・ElevenLabs TTS 少額は目視)",
+      "sbg_responsible_role": "HQ SBG（艦隊横断・session 占有率）",
+      "satellite_specific_note": "Thuban の Higgsfield credit 大規模消費のような無人課金リスクなし。ElevenLabs TTS は GHA 日次少額で月次目視。"
+    },
+    "qla_assignment": {
+      "_comment": "★QLA（Quality Layer Auditor）= Critical Review 担当。Sirius は出典整合 SOP + 文字数 + Notion 7 日 dedup + 人間採用ゲートで構成。",
+      "qla_mode": "sirius-internal-quality-chain",
+      "qla_chain": [
+        "出典整合ハード品質ゲート（実 RSS 出典 SOP・A/B 別媒体・捏造引用禁止・本文裏取り）",
+        "文字数チェック（短尺 300-400字 / X 400-500字）",
+        "Notion 7 日 dedup（原文番号の重複回避）"
+      ],
+      "qla_responsible_role": "cloud routine（生成時の自己検証）+ Notion 採用カラム（A案/B案/両方/不採用）の人間レビューゲート"
+    }
+  },
+
+  "autonomy_settings": {
+    "_comment": "★REQ-011 v1.2 §6-3 Phase C1 規定の Phase 1 既定値。",
+    "current_phase": 1,
+    "current_phase_status": "phase-1-initial (★既稼働 operational・リーン巻きつけ・Step 6 直後・育成型 Phase B 未着手)",
+    "autonomy_level_percent": 30,
+    "autonomy_level_rationale": "Phase 1 初期化規定値（REQ-011 v1.2 §6-3 Phase C1）。既稼働だが governance 観点では Phase 1 から開始（リーン巻きつけ）。Phase 2/3 昇格時に 50%/70% へ段階引き上げ。",
+    "thresholds": {
+      "critical_review_threshold_percent": 50,
+      "approval_gate_threshold_percent": 70,
+      "thresholds_source": "REQ-011 v1.2 §6-3 Phase C1 / 00-START-HERE.md §4 沈黙承認原則"
+    },
+    "phase_progression_schedule": {
+      "phase_1_to_2_promotion": "disabled (育成型 / per-asset promotion at Phase C)",
+      "phase_2_to_3_promotion": "disabled (育成型 / per-asset promotion at Phase C)",
+      "phase_3_promotion_method": "対象資産単位（D/R/K/Q 区分別）で Phase C 昇格判定 4 基準達成時に発動",
+      "next_promotion_earliest": "Phase B 着手 + 3 ヶ月後"
+    }
+  },
+
+  "decision_class_authority": {
+    "_comment": "★REQ-011 v1.2 §7-3 + 00-START-HERE.md §4 + REQ-COSMOS-003 v1.1 Class 0-3 規定との整合。Sirius 固有 examples。",
+    "class_0_silent_approval": {
+      "label": "沈黙承認（自律実行可・記録のみ）",
+      "examples_sirius_specific": [
+        "ローカルファイル生成（.tmp/ キャッシュ / drafts）",
+        "RSS fetch（GHA proxy）/ 原文選択（read）/ Notion read（dedup チェック）",
+        "A/B リライト生成（ローカル・cloud routine 内）"
+      ],
+      "authority": "全 sirius-internal エージェント（cloud routine / skills）"
+    },
+    "class_1_post_report": {
+      "label": "事後報告（自律実行可・Daily Digest に集約）",
+      "examples_sirius_specific": [
+        "Notion write（REST POST 新規ページ / PATCH 音声 URL）",
+        "ElevenLabs TTS（音声合成・実費少額・GHA 06:15）",
+        "GitHub Actions 実行（sources-cache / audio-filler）"
+      ],
+      "authority": "全 sirius-internal エージェント"
+    },
+    "class_2_silent_approval_3day": {
+      "label": "3 日間沈黙承認（提案 → 3 日経過で自動実装）",
+      "examples_sirius_specific": [
+        "既存 skill / 原文選択ロジックの最適化（意味不変）",
+        "OPR-001 内 SOP の表現改善"
+      ],
+      "authority": "PG（起動後）/ Phase 1 中は HQ Synthesizer 経由で司令官沈黙承認"
+    },
+    "class_2_30sec_gate": {
+      "label": "30 秒承認ゲート（即時承認・記録あり）",
+      "examples_sirius_specific": [
+        "新 platform sub-skill 追加（Threads/YouTube/Reels）",
+        "原文コーパスの大幅追加 / カテゴリ拡張",
+        "マネタイズ動線（広告/アフィリ）の本文挿入方針"
+      ],
+      "authority": "Constitutional Judge (司令官・User 直接) 30 秒承認"
+    },
+    "class_3_explicit_approval": {
+      "label": "明示承認必須（Class 3 CR 発議・スタンプ必須）",
+      "examples_sirius_specific": [
+        "本 governance 3 ファイルの自律度・閾値変更",
+        "project-constitution.json philosophy_constraints / brand_voice / compliance の改訂",
+        "scope_in セクションへの新規資産追加（genre 特異物の汚染回避ゆえ原則発生しない）",
+        "SNS 投稿 API の自動化解放（現状は人間専任・封印）",
+        "新規エージェント追加・Mode 変更"
+      ],
+      "authority": "Constitutional Judge (司令官・User 直接) 明示承認 + Class 3 CR 発番"
+    }
+  },
+
+  "agent_introduction_schedule": {
+    "phase_1_active": ["sns_rewrite (skill)", "sns_rewrite_x (skill)", "cloud_routine_orchestrator"],
+    "phase_2_scheduled": ["platform_subskill (Threads/YouTube/Reels)"],
+    "phase_3_scheduled": [],
+    "phase_4_scheduled": []
+  },
+
+  "satellite_specific_disciplines_reference": {
+    "_comment": "★project-constitution.json::philosophy_constraints.satellite_specific_disciplines を参照（重複定義禁止・REQ-012 準拠）",
+    "reference_path": "./project-constitution.json#/philosophy_constraints/satellite_specific_disciplines",
+    "disciplines_count": 3,
+    "scope_marker": "sirius-internal-only (global 化対象外・genre 汚染回避で構造的に阻止・scope_in=0)"
+  },
+
+  "monitoring_and_escalation": {
+    "constitution_compliance_target_percent": 95,
+    "constitution_compliance_measurement": "出典整合ゲート通過率 + 捏造引用ゼロ + PF 規約遵守を月次レビューで集計",
+    "critical_review_pass_target_percent": 80,
+    "level_3_escalation_target_count": 0,
+    "escalation_endpoint": "cosmos-core/registry/escalation-queue.jsonl (HQ Synthesizer 経由)",
+    "weekly_observation_log_path": "docs/handoffs/（cosmos-sync-handoff に集約・Phase B 月次レビューへ）",
+    "genre_risk_monitoring_note": "★ genre 固有監視＝誤情報拡散 / アカウント BAN / 捏造引用 / 政治的偏向炎上 / PF 規約変更（project-constitution.json risk_management）。"
+  },
+
+  "deferred_v0_2_items": {
+    "pg_activation_timing": "PG 役の割付 + 起動トリガー（I5/Phase B で確定）",
+    "monetization_budget": "マネタイズ着手時の収益連動予算枠（budget-policy.json revenue_budget_transition_plan）",
+    "x_cron_wiring": "X パイプライン（sns-rewrite-x）の cron 配線（現状手動）"
+  },
+
+  "related_documents": {
+    "global_constitution": "cosmos-core/constitution/global-constitution.json (v1.0)",
+    "project_constitution": "./project-constitution.json (v0.1)",
+    "scope_boundary": "./scope-boundary.json (v0.1)",
+    "budget_policy": "./budget-policy.json (v0.1)",
+    "migration_protocol": "# COSMOS — 既存プロジェクト移行プロトコル 要件定義書 v1.2.md §6-2 I3 / §6-3 Phase C1 / §7",
+    "standardization_report": "cosmos-core/registry/migration-standardizations/20260604-sirius-shortform-standardization.md",
+    "satellite_link": "cosmos-core/registry/satellites/sirius-link.json",
+    "monthly_review_template": "cosmos-core/docs/commander-playbook/monthly-review-template.md (v0.3)"
+  },
+
+  "change_record": [
+    {
+      "cr_id": "CR-COSMOS-20260604-141",
+      "version": "0.1",
+      "created_at": "2026-06-04",
+      "phase": "Phase 4-post / COSMOS 移行 Step 6 稼働開始準備（governance/ 配下 3 ファイル起草・案 Y 手動充填）",
+      "drafted_by_agent": "central-claude (案 Y 手動充填)",
+      "scope": "Phase 1 既定値（自律度 30% / 閾値 50%/70%）+ Sirius 固有（PG=TBD / 司令塔=User 直接 / SBG=session-occupancy-based〔通貨ゼロ運用〕/ QLA=出典整合ゲート + 文字数 + dedup + 人間採用ゲート）+ 衛星固有規律 3 種参照 + class_0-3 権限境界",
+      "approval_status": "Constitutional Judge 正式承認は Phase B 月次レビュー 3 サイクル完了後",
+      "note": "初版起草（Vega/Thuban 同型・案 Y 手動充填）。Sirius 固有差分＝(1) PG 役不在（WAT 直列・I5/Phase B で確定）(2) 通貨予算ゼロ運用（Vega 同型・ElevenLabs TTS 少額のみ）(3) QLA = 出典整合ハード品質ゲート + 人間採用ゲート (4) 司令塔=User 直接。"
+    }
+  ]
+}

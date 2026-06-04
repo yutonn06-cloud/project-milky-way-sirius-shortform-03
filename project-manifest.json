@@ -1,0 +1,71 @@
+{
+  "_comment_meta": "★MVD 1/6: project-manifest.json — Sirius（SNS Rewrite Automation）衛星メタデータの一次ソース（機械可読）",
+  "_comment_class": "★Class 1 変更 — PIA/Governor が状態変化時のみ自動更新・手動編集禁止",
+  "_comment_spec": "★規定出典: bubbly-exploring-wozniak.md セクション 13-1（16 キー全て必須・空欄禁止）",
+  "_comment_audit": "★CG が mvd_files の参照整合性を hash 監査・constitution_hash で project-constitution.json と紐付け",
+  "_comment_filling_status": "★COSMOS 移行 Step 5（案 Y 手動充填）v0.1 初版（CR-COSMOS-20260604-141）。★ Sirius は migration 時点で既稼働 operational（リーン巻きつけ）＝Vega/Thuban の『ゼロから育成』と異なり稼働を壊さず scaffold を後付け。設計 = migration-standardizations/20260604-sirius-shortform-standardization.md §2。",
+
+  "project_id": "project-milky-way-sirius-shortform-03",
+  "display_name": "SNS Rewrite Automation",
+
+  "galaxy": "milky-way",
+  "star": "sirius",
+  "domain": "shortform",
+  "seq": "03",
+
+  "status": "operational-live",
+  "phase": 1,
+
+  "commander": {
+    "_comment": "★司令官識別情報（REQ-COSMOS-001 v1.3 §3-3 v1.3 補遺で衛星 manifest::commander フィールドを規範化）",
+    "github_handle": "yutonn06-cloud",
+    "reference": "cosmos-core/identity/user.md §1 Commander Profile（艦隊 identity 三位一体・[[user]] 連動）"
+  },
+
+  "created_at": "2026-06-04T00:00:00+09:00",
+  "last_updated_at": "2026-06-04T00:00:00+09:00",
+
+  "mvd_files": {
+    "_comment": "★他 5 ファイルへの相対パスポインタ（必須）",
+    "project_constitution": "./project-constitution.json",
+    "req_001_requirements": "./meta/foundation/REQ-001-requirements.md",
+    "pln_001_business_plan": "./meta/foundation/PLN-001-business-plan.md",
+    "opr_001_operations_guide": "./meta/foundation/OPR-001-operations-guide.md",
+    "dia_001_system_diagram": "./meta/foundation/DIA-001-system-diagram.md"
+  },
+
+  "governance_files": {
+    "_comment": "★governance/ 配下ファイルへのポインタ（衛星固有・Step 6 で v0.1 初版起草 CR-COSMOS-20260604-141）",
+    "planet_governor_config": "./governance/planet-governor-config.json",
+    "scope_boundary": "./governance/scope-boundary.json",
+    "budget_policy": "./governance/budget-policy.json",
+    "_status": "v0.1 初版起草完了（CR-COSMOS-20260604-141 / 2026-06-04）— Class 3 焼き込み確定は Phase B 月次レビュー 3 サイクル完了後 + Constitutional Judge 正式承認時"
+  },
+
+  "external_storage_links": {
+    "_comment": "★②制作アセット層（AI Drive）への外部ポインタ。**Sirius は AI Drive 不使用・Notion-SSoT**（Vega/Thuban の AI Drive 採用と異なる）。空相当。",
+    "provider": "N/A (Notion-SSoT・AI Drive 不使用)",
+    "ssot": "Notion DB (id 087eff43-caa5-41ff-944e-7982f68faef8 『Rewrite Script』)",
+    "aidrive_storage": "N/A"
+  },
+
+  "agents": [
+    {"id": "sns_rewrite", "phase_introduced": 1, "role": "ショート動画リライト SOP（.claude/skills/sns-rewrite・300-400字敬体 A/B）", "scope": "sirius-internal (skill)"},
+    {"id": "sns_rewrite_x", "phase_introduced": 1, "role": "X 長文リライト SOP（.claude/skills/sns-rewrite-x・400-500字 3型 A/B/C）", "scope": "sirius-internal (skill)"},
+    {"id": "cloud_routine_orchestrator", "phase_introduced": 1, "role": "日次自律オーケストレーション（trigger-prompt.md・cloud routine 06:00 JST）", "scope": "sirius-internal"},
+    {"id": "platform_subskill", "phase_introduced": 2, "role": "将来 platform 拡張（Threads/YouTube/Reels の sub-skill 追加パターン）", "scope": "sirius-internal (planned)"}
+  ],
+  "_agents_note": "WAT 三者構造の現体制 = User（司令官・直接・SNS 投稿 + 採用判断）↔ Workflows（cron/trigger-prompt）↔ Agents（skills）↔ Tools（tools/ PS+Python）。外部戦略モデルなし＝Claude Code（cloud routine）内で完結する単純な直列フロー（標準化レポート §3）。",
+
+  "kpi_primary": {
+    "_comment": "★主要 KPI 定義 — 指標名と目標値を必須記載",
+    "metric_name": "日次リライト生成数 × 採用率（Notion 採用カラム）",
+    "target_value": "日次 A/B 各1本（ショート動画）安定生成 + 採用率の向上（暫定・v0.1 draft）",
+    "measurement_method": "Notion DB の生成カウント + 採用カラム（A案/B案/両方/不採用）集計。将来は SNS エンゲージを追加。"
+  },
+
+  "inherited_skills": [],
+  "_inherited_skills_note": "D 区分即時昇格 0 件（migration-extractions §3-1）。理由 = genre 特異物（怪しい系レトリック）の艦隊共通化は有害（汚染回避）＝scope_in=0 と整合（Thuban の Notion 固有性とは別理由・結論は同じ D=0）。",
+
+  "constitution_hash": "step5-v0.1-placeholder-cr-20260604-141"
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "budget-policy",
+  "_comment_meta": "★Sirius 衛星 governance 3/3 のうち 3 番目 — 予算統制ポリシー",
+  "_comment_class": "★Class 3 変更 — 70%/85% 閾値の変更・三層配分比の変更は Constitutional Judge 明示承認必須（Philosophy 4 規定）",
+  "_comment_spec": "★規定出典: REQ-COSMOS-011 v1.2 §6-3 Phase C3 + global-constitution.json philosophies.philosophy_4",
+  "_comment_filling_status": "★COSMOS 移行 Step 6（案 Y 手動充填）v0.1 初版（CR-COSMOS-20260604-141）。**Sirius は通貨予算を基本ゼロ運用（Vega 同型・session 占有率代替）**。Thuban の Higgsfield credit 大規模消費モデルとは異なり、実費は ElevenLabs TTS（音声・少額）のみ。",
+
+  "schema_version": "0.1",
+  "satellite_id": "project-milky-way-sirius-shortform-03",
+  "celestial_name": "Milky Way > Sirius",
+  "inherits_from": "cosmos-core/constitution/global-constitution.json (v1.0) philosophies.philosophy_4",
+  "last_updated": "2026-06-04",
+  "updated_by_agent": "central-claude",
+  "approval_status": "step6-v0.1-pending-constitutional-judge",
+
+  "sirius_specific_budget_model": {
+    "_comment": "★Sirius は通貨予算を基本ゼロ運用（Vega 同型）。実費は ElevenLabs TTS（音声合成・少額・司令官 API key・GHA 06:15 日次）のみで承認ゲート不要レベル。主たる予算統制は Claude Code session 占有率（モデル選択）。",
+    "currency_budget_mode": "minimal (ElevenLabs TTS 少額のみ・基本ゼロ運用)",
+    "primary_budget_system": {
+      "label": "Claude Code セッション占有率（Vega 同型・モデル選択用）",
+      "unit": "session-occupancy-percent",
+      "definition": "司令官の AI セッション総時間に占める Sirius 関連セッション時間の割合（月次集計）",
+      "control_mechanism": "下記 three_layer_allocation の green/yellow/red モデル選択（Vega 同型・HQ SBG 横断監視）"
+    },
+    "real_cost_note": {
+      "label": "ElevenLabs TTS 実費（少額）",
+      "detail": "GHA audio-filler.yml が日次 A/B 音声を生成（ElevenLabs・司令官 API key）。1 日数件で少額のため SEC-010 級の承認ゲートは不要。失敗時は Notion ステータス=失敗で graceful。残高低下は月次で目視。",
+      "control_mechanism": "GHA secrets（ELEVENLABS_API_KEY）+ 月次目視。Thuban の Higgsfield credit のような無人大量消費リスクなし。"
+    },
+    "rationale": "global-constitution.json philosophy_4 budget_allocation_formula『基盤(70%) + 機会(25%) + 進化(5%)』を session 占有率に適用（Vega 同型）。マネタイズ（広告/アフィリ）到達後に収益連動予算へ拡張予定。"
+  },
+
+  "three_layer_allocation": {
+    "_comment": "★REQ-011 v1.2 §6-3 Phase C3 + Philosophy 4 既定値の Sirius 適用版（session 占有率・モデル選択）。",
+    "layer_a_foundation": {
+      "label": "基盤予算（70%・絶対死守）",
+      "allocation_percent": 70,
+      "purpose_sirius_specific": "Sirius の最低限稼働を保証：日次 cloud routine（リライト生成 + Notion 書込み）+ GHA（RSS proxy + 音声）。コンテンツエンジンの日次稼働を死守。",
+      "dynamic_model_selection": {
+        "green_0_to_70_percent": {"label": "最高品質モード", "session_occupancy_range": "0% 〜 70%（月次累積）", "policy": "第 1 推奨モデル（Claude Sonnet 4.6 / Opus）をフル活用"},
+        "yellow_70_to_85_percent": {"label": "効率最適化モード", "session_occupancy_range": "70% 〜 85%（月次累積）", "policy": "定型リライトは高速モデルへ切替。設計・品質チェックは第 1 推奨モデル維持。"},
+        "red_above_85_percent": {"label": "サバイバルモード", "session_occupancy_range": "85% 超（月次累積）", "policy": "新規実験停止 + 日次パイプライン継続のみ + 人間ゲート死守"}
+      }
+    },
+    "layer_b_opportunity": {
+      "label": "機会予算（25%・ROI 条件解放）",
+      "allocation_percent": 25,
+      "purpose_sirius_specific": "新規 platform 拡張（Threads/YouTube/Reels sub-skill）+ マネタイズ実験（広告/アフィリ動線）+ 原文コーパス拡充。",
+      "release_condition_formula": "期待成果（エンゲージ/採用率見込み）× 成功確率 / 追加コスト >= 閾値 かつ 機会予算残高 > 0",
+      "approval_authority": "Strategic Commander (司令官・User 直接)",
+      "carryover_policy": "未使用分は翌月繰越可能（上限 50%）"
+    },
+    "layer_c_evolution": {
+      "label": "進化予算（5%・次元上昇専用）",
+      "allocation_percent": 5,
+      "purpose_sirius_specific": "Sirius 自身の Phase 進行 + 衛星固有規律の汎用化抽象化（2 段分離 / RSS proxy パターンの Phase C 準備）+ マネタイズモデル設計。",
+      "management": "VHA 管理（艦隊横断）・月次強制天引き",
+      "current_phase_evolution_targets": [
+        "COSMOS 移行 Step 5/6/I5 完走（本 CR-141）→ 育成型 Phase B 着手",
+        "マネタイズ着手（広告/アフィリ動線・PLN-001 ロードマップ）",
+        "platform 拡張パターンの抽象化準備"
+      ]
+    }
+  },
+
+  "downgrade_thresholds": {
+    "_comment": "★Philosophy 4 既定値 70%/85%（session 占有率・モデル選択）。",
+    "yellow_threshold_percent": 70,
+    "red_threshold_percent": 85,
+    "thresholds_source": "global-constitution.json philosophies.philosophy_4.budget_layers.layer_a_foundation.dynamic_model_selection",
+    "constitution_violation_check": "両閾値の変更は Philosophy 4 違反。Class 3 CR が必須。"
+  },
+
+  "budget_governance_mechanism": {
+    "real_time_monitoring": {
+      "agent": "HQ SBG（session 占有率・横断）",
+      "method": "月次レビューで session 占有率 + ElevenLabs 実費（目視）を確認"
+    },
+    "escalation_triggers": [
+      {"trigger": "session 占有率が yellow（70%）超過", "action": "Daily Digest 通知 + yellow モード切替", "escalation_level": "Level 1"},
+      {"trigger": "session 占有率が red（85%）超過", "action": "新規実験停止 + escalation-queue.jsonl 投入", "escalation_level": "Level 2"}
+    ],
+    "recovery_protocol": "翌月回復後に green モード自動復帰 + 月次レビューで効率分析"
+  },
+
+  "revenue_budget_transition_plan": {
+    "_comment": "★Sirius マネタイズ（広告/アフィリ）到達時の収益連動予算への拡張",
+    "trigger": "SNS マネタイズ着手 + 初収益発生時点",
+    "transition_method": "現行（session 占有率）に収益連動の機会予算枠を追加",
+    "initial_estimate": "未定（マネタイズ着手時に Phase B 月次レビューで確定）"
+  },
+
+  "related_documents": {
+    "global_constitution": "cosmos-core/constitution/global-constitution.json (v1.0) philosophies.philosophy_4",
+    "project_constitution": "./project-constitution.json (v0.1) #/philosophy_constraints/philosophy_4_budget_consciousness",
+    "planet_governor_config": "./planet-governor-config.json (v0.1)",
+    "scope_boundary": "./scope-boundary.json (v0.1)",
+    "migration_protocol": "# COSMOS — 既存プロジェクト移行プロトコル 要件定義書 v1.2.md §6-3 Phase C3",
+    "philosophy_source": "COSMOS-PHIL-001 v1.1 第 4 章",
+    "satellite_link": "cosmos-core/registry/satellites/sirius-link.json"
+  },
+
+  "change_record": [
+    {
+      "cr_id": "CR-COSMOS-20260604-141",
+      "version": "0.1",
+      "created_at": "2026-06-04",
+      "phase": "Phase 4-post / COSMOS 移行 Step 6 稼働開始準備（governance/ 配下 3 ファイル起草・案 Y 手動充填）",
+      "drafted_by_agent": "central-claude (案 Y 手動充填)",
+      "scope": "**通貨予算 基本ゼロ運用（Vega 同型・session 占有率代替）**+ ElevenLabs TTS 実費（少額・承認ゲート不要レベル）+ 三層配分（70/25/5）+ green/yellow/red モデル選択",
+      "approval_status": "Constitutional Judge 正式承認は Phase B 月次レビュー 3 サイクル完了後",
+      "note": "初版起草（Vega CR-008 同型・案 Y 手動充填）。**Sirius 固有差分＝通貨予算ゼロ運用**（Thuban の Higgsfield credit 大規模消費とは異なり実費は ElevenLabs TTS 少額のみ）。マネタイズ到達後に収益連動予算へ拡張予定。"
+    }
+  ]
+}
