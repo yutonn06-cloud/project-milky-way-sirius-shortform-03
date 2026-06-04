@@ -1,46 +1,40 @@
-クローン済みリポジトリのルート (cwd) で動作してください。本日分のSNSリライトを1本、自律モードで生成します。
+クローン済みリポジトリのルート (cwd) で動作してください。本日分のSNSリライト（ショート動画）を1本、自律モードで生成します。
 
-リポジトリのルートに以下が配置されています：
-- `skill/SKILL.md` — このタスクのワークフロー定義（**最初にこのファイルを読み、その内容に従うこと**）
+**Single source of truth for rules:**
+- `.claude/skills/sns-rewrite/SKILL.md` — 文体・敬体・タメ語禁止・出力フォーマット（**最初に全文読み、これに従う**）
+- `workflows/cite_authentic_source.md` — 出典付与の共通SOP
+- `reference/authentic-sources.md` — 4本のRSS + 3つの長期文脈リファレンス
 - `skill/references/*.md` — 原文集（45ファイル・450本）
 
-注：`sns-rewrite` スキルは「登録された Claude Code スキル」としては存在しません。`skill/SKILL.md` を**通常のテキストファイルとして読み込み**、そこに書かれた手順を以下の自律モード調整付きで実行してください。
+トリガープロンプトはオーケストレーションのみを担う。トーン規則は skill ファイルに集約済み。**ここで再記述しない**（重複は drift の温床）。
 
-【重要：音声生成はこのルーチンでは行わない】
-ElevenLabs API (api.elevenlabs.io) はサンドボックスのネットワーク許可リストに含まれていません。音声生成は、毎日 06:15 JST に GitHub Actions のクロンジョブ（`.github/workflows/audio-filler.yml`）が後からNotionエントリを読み取り、ElevenLabsで生成して `audio-store` リリースに MP3 をアップロードし、その公開URLを音声URL_A/Bプロパティに書き込みます。このルーチンは、テキストリライトとNotion書き込みまでを担当します。
+【重要：このルーチンでは音声生成しない】
+ElevenLabs API はサンドボックスのネットワーク許可リストに含まれない。音声生成は毎日 06:15 JST に GitHub Actions（`.github/workflows/audio-filler.yml`）が後から実行する。本ルーチンはテキストリライト＋Notion書き込みまで。
+
+【重要：MCPは使わず Notion REST API を直接叩く】
+`Notion:notion-create-pages` などのMCPツールは使用しない。`POST https://api.notion.com/v1/pages`（およびDB query）を直接呼ぶ。リクエスト形式は `.claude/skills/sns-rewrite/SKILL.md` §5 の typed JSON 例を参照。`NOTION_TOKEN` は `.env` または環境変数から取得。
 
 【自律モード・厳守ルール】
-- 質問は一切しないこと（ask_user_input_v0 を呼ばない）
-- 確認も求めない。途中で人間に判断を委ねない
-- 何かエラーが起きたらNotionに「失敗」記録だけ残して終了
+- 質問は一切しない（ask_user_input_v0 を呼ばない）
+- 確認も求めない
+- エラー時はNotionに `ステータス = "失敗"` を残して終了
 
-【ステップ0：ワークフロー把握】
-- skill/SKILL.md を読み込み、ワークフローを把握する
+【ステップ0：出典フェッチ】以下4本のRSSをWebFetchで**並列**取得し、各フィードの上位3件（計12候補）をメモリ上に保持：
+- https://www.cao.go.jp/rss/news.rdf  （内閣府）
+- https://www.mhlw.go.jp/stf/news.rdf  （厚生労働省）
+- https://news.yahoo.co.jp/rss/categories/domestic.xml  （Yahoo!ニュース 国内）
+- https://www.nhk.or.jp/rss/news/cat1.xml  （NHKニュース）
 
-【ステップ1：原文選択】
-- skill/references/ の45ファイルから一様ランダムに1ファイル選ぶ
-- そのファイル内の10本の原文から一様ランダムに1本選ぶ
-- 直近7日以内にNotionに登録された「原文番号」と被る場合は別の原文を引き直す
-  （Notion DB e8322351-3390-420a-af36-19d6836bee0c を「原文番号」プロパティで検索して確認）
+サンドボックスでローカルPSスクリプトは動かないため、`tools/fetch-sources.ps1` は使わずWebFetch経路を取る。4本すべて失敗ならNotionに「失敗」を残して終了。
 
-【ステップ2：方針】skill/SKILL.md の軸A/B/C から1個ずつランダム選択
-- ターゲット：軸Aの10個から1個
-- 文体：軸Bの5個から1個
-- 投稿先：軸Cの6個から1個
-- A案・B案で文体は変える（A案で選んだ文体とは別の文体をB案に当てる）
+注：FutureTimeline.net は実用的なRSSを公開していないため active feed から除外（`reference/authentic-sources.md` の長期文脈リファレンス扱い）。
 
-【ステップ3：リライト】skill/SKILL.md の出力フォーマットに従いA案・B案の2本を生成
-- **文体は必ず敬体（です・ます調）で書くこと**。A案・B案ともに敬体を維持する。
-- **タメ語・カジュアル語の禁止表現**：「ねえ」「でしょ」「だよね」「じゃん」「だよ」「だね」「〜よね」「〜なの？」など、友達口調を想起させる語尾・呼びかけは使わない。
-- 体言止め・問いかけ・共感→反転などで差別化するのはOKだが、語尾は常に「〜です／〜ます／〜でしょうか／〜ません」に揃える。
+【ステップ1】`.claude/skills/sns-rewrite/SKILL.md` 全文 + `workflows/cite_authentic_source.md` を読み、以下のセクションに完全準拠して実行：
+- §1 原文選択（直近7日の重複チェックは §「Notion 重複チェック」 のREST query で行う）
+- §2 ターゲット選択（軸A・10個から1個）
+- §3 文体選択（軸B・5個からA案・B案で異なる2個）
+- §4 リライト実行（300〜400字・敬体厳守）
+- §4.5 出典付与（ステップ0で取得した15候補からA案・B案で異なる媒体・異なる記事を1件ずつ。出典行は20〜30字以内）
+- §5 Notion書き込み（クラウド経路の typed JSON。投稿先 = "ショート動画" 固定、音声URL_A/B は空、出典URL_A・出典URL_B・出典媒体 を必ず埋める）
 
-【ステップ4：Notion書き込み】
-- データソース e8322351-3390-420a-af36-19d6836bee0c に1ページ追加
-- プロパティは skill/SKILL.md §5のマッピング通り
-- **重要：音声URL_A と 音声URL_B は書き込まない（空のままにする）**
-  → GitHub Actions のクロンジョブ（audio-filler.yml）が後からElevenLabsで生成して埋める
-
-【ステップ5：終了】
-- バリエーション提案（skill/SKILL.md §7）はスキップ
-- 最終サマリー（原文タイトル・投稿先・文字数A/B・NotionページURL）を1〜2行で出力して終了
-- 音声URLについては言及しない（ローカル処理の話はサマリーに書かない）
+【ステップ2】最終サマリー（原文タイトル・文字数A/B・出典媒体A/B・NotionページURL）を1〜2行で出力して終了。音声URLについては言及しない。

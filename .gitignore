@@ -7,3 +7,7 @@ history.json
 tmp_*.json
 headers_*.txt
 logs/
+.archive/
+.tmp/
+credentials.json
+token.json
