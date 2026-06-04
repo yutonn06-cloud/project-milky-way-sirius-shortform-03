@@ -121,6 +121,27 @@
 
 ---
 
+## §8-2 セッション終了時 handoff 規律（COSMOS 同期の合図・bridge-files-spec §5-5）
+
+ガバナンスに関わる変化があったセッションの終了時、`docs/handoffs/YYYY-MM-DD-cosmos-sync-handoff.md` を生成する（50-100行・中央が §2-0b で pull して台帳反映する）。5節構成：
+
+(a) セッション要約 — 何をしたか1-3行
+(b) 変更ファイル — path + 1行説明（+ writeback_level: low/medium/high）
+(c) COSMOS 同期項目（4 zone） —
+    (i)   sirius-link.json 更新候補（status / KPI / phase / git_status）
+    (ii)  dependency-map 更新候補
+    (iii) D-class 昇格候補（あれば。無ければ「0件」）
+    (iv)  Phase B 月次レビュー参照項目（あれば）
+(d) git commit hash(es)
+(e) 残務 / 申し送り
+
+★ 同期が必要な変化の線引き：
+- 日常のリライト調整（skills/原文/プロンプト） = 同期不要（衛星内 Class 0/1）。handoff 不要。
+- status/KPI/phase/新platform/マネタイズ着手 = handoff に記載（月次まとめで可）。
+- project-constitution.json の brand_voice/forbidden/compliance 変更 = Class 3 → 必ず handoff に明記（司令官=Constitutional Judge 承認案件）。
+
+---
+
 ## §9 更新規律・関連 CR
 
 **更新頻度上限：** 四半期 1 回程度（月次レビュー結果 + Phase 遷移時）。
