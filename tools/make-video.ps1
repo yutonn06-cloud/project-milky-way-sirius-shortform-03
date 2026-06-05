@@ -71,6 +71,10 @@ param(
     [switch]$Auto,                           # buffer mode: auto-archive 使用済み, then make N cuts of the newest unposted topic
     [int]$Count           = 3,               # videos per -Auto run (cuts cycling A/B audio)
     [int]$MaxPerTopic     = 12,              # runaway guard: skip a topic once it has this many buffered cuts
+    # --- X-format variety (occasional, for anti-staleness) ---
+    [string[]]$XDays      = @("Tuesday","Friday"),  # weekdays -Auto ALSO makes 1 X-format video (~weekly cadence)
+    [int]$XCount          = 2,               # cuts per X item
+    [switch]$NoX,                            # disable the X-variety injection
     [switch]$KeepIntermediate
 )
 
@@ -146,9 +150,12 @@ function Get-RichText($prop) {
 function Get-NotionHeaders { @{ "Authorization" = "Bearer $($env:NOTION_TOKEN)"; "Notion-Version" = "2022-06-28" } }
 function Get-NotionDbId { if ($env:NOTION_DATABASE_ID) { $env:NOTION_DATABASE_ID } else { "087eff43-caa5-41ff-944e-7982f68faef8" } }
 
-# generic ショート動画 query with a caller-supplied extra-filter array (UTF-8 safe POST)
-function Invoke-NotionFilter($extraFilters, $pageSize = 20) {
-    $and = @(@{ property = "投稿先"; select = @{ equals = "ショート動画" } }) + $extraFilters
+# generic query with caller-supplied extra-filters (UTF-8 safe POST). $dest filters
+# 投稿先; pass $null to match any 投稿先 (used by archive, which spans ショート動画 + X).
+function Invoke-NotionFilter($extraFilters, $pageSize = 20, $dest = "ショート動画") {
+    $and = @()
+    if ($dest) { $and += @{ property = "投稿先"; select = @{ equals = $dest } } }
+    $and += $extraFilters
     $bodyObj = @{
         filter    = @{ and = $and }
         sorts     = @(@{ timestamp = "created_time"; direction = "descending" })
@@ -167,9 +174,17 @@ function Get-AutoEntries {
         @{ property = "ステータス"; select = @{ does_not_equal = "使用済み" } }
     )
 }
-# entries the operator has marked posted -> their buffer videos get archived
+# entries the operator has marked posted -> their buffer videos get archived (any
+# 投稿先 -- only files that actually match a pattern are moved, so non-video dests are no-ops)
 function Get-PostedEntries {
-    Invoke-NotionFilter @( @{ property = "ステータス"; select = @{ equals = "使用済み" } } ) 100
+    Invoke-NotionFilter @( @{ property = "ステータス"; select = @{ equals = "使用済み" } } ) 100 $null
+}
+# newest 未使用 X-format entry with text (no audio needed -- we TTS it locally)
+function Select-AutoXEntry {
+    foreach ($e in @(Invoke-NotionFilter @( @{ property = "ステータス"; select = @{ equals = "未使用" } } ) 10 "X")) {
+        if ((Get-RichText $e.properties.'リライト本文').Trim()) { return $e }
+    }
+    return $null
 }
 
 function Set-NotionStatus($pageId, $name) {
@@ -197,8 +212,11 @@ function Invoke-ArchivePosted {
     foreach ($p in $posted) {
         $num = Get-RichText $p.properties.'原文番号'
         if (-not $num) { continue }
+        # X videos are auto_X<num>_*, ショート動画 are auto_<num>_* -- pick the right one so
+        # the same 原文番号 in both pipelines never cross-archives.
+        $pat = if ($p.properties.'投稿先'.select.name -eq "X") { "auto_X${num}_*" } else { "auto_${num}_*" }
         $files = @(Get-ChildItem -LiteralPath $DirPlain -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Name -like "auto_${num}_*" })
+            Where-Object { $_.Name -like $pat })
         if ($files.Count -eq 0) { continue }
         $dest = Initialize-Dir $DirArchive
         foreach ($f in $files) {
@@ -226,6 +244,30 @@ function Get-Audio($url, $name) {
     $dl = Join-Path $tmp $name
     Invoke-WebRequest -Uri $url -OutFile $dl -UseBasicParsing
     return $dl
+}
+
+# local ElevenLabs TTS (X-format entries have no 音声URL -- synthesised on demand).
+# PAID API. Uses ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID from .env.
+function New-TtsAudio($text, $name) {
+    if (-not $env:ELEVENLABS_API_KEY -or -not $env:ELEVENLABS_VOICE_ID) {
+        throw "ElevenLabs keys missing from .env (ELEVENLABS_API_KEY / ELEVENLABS_VOICE_ID)"
+    }
+    $out = Join-Path $tmp $name
+    $body  = (@{ text = $text; model_id = "eleven_v3" } | ConvertTo-Json)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+    $uri = "https://api.elevenlabs.io/v1/text-to-speech/$($env:ELEVENLABS_VOICE_ID)?output_format=mp3_22050_32"
+    Invoke-WebRequest -Uri $uri -Method Post -Headers @{ "xi-api-key" = $env:ELEVENLABS_API_KEY } `
+        -Body $bytes -ContentType "application/json" -OutFile $out -UseBasicParsing | Out-Null
+    if (-not (Test-Path $out) -or (Get-Item $out).Length -lt 2000) { throw "ElevenLabs TTS produced no/empty audio" }
+    return $out
+}
+
+# state for the X-variety cadence: at most one X video per X-day, regardless of how
+# many times -Auto runs that day. Stored outside OneDrive/git.
+function Get-XStatePath {
+    $dir = Join-Path $env:LOCALAPPDATA "sirius-make-video"
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+    return Join-Path $dir "last-x-date.txt"
 }
 
 # retry a flaky IO action (transient file locks: OneDrive/AV touching a file we just wrote)
@@ -786,10 +828,48 @@ function Invoke-CapCutDraft($plain, $srt, $name) {
     if ($LASTEXITCODE -ne 0) { Write-Warning "  CapCut draft build failed (exit $LASTEXITCODE)." }
 }
 
+# --- X-format variety: on X-days, also make a few cuts from one X-format entry -----
+# Occasional anti-staleness injection (User 決定 2026-06-05). On an X-day (and at most
+# once that day), take the newest 未使用 X entry, TTS its text locally (X has no 音声URL),
+# make $XCount cuts into the SAME buffer, mark it 動画化済. Files are auto_X<num>_* so they
+# never collide with ショート動画 of the same 原文番号.
+function Invoke-AutoX {
+    if ($NoX) { return }
+    $dow = (Get-Date).DayOfWeek.ToString()
+    if ($XDays -notcontains $dow) { Write-Host "X: $dow is not an X-day ($($XDays -join '/')) -- skip."; return }
+    $statePath = Get-XStatePath
+    $today = (Get-Date).ToString('yyyy-MM-dd')
+    if ((Test-Path $statePath) -and ((Get-Content $statePath -Raw).Trim() -eq $today)) {
+        Write-Host "X: already made one today -- skip."; return
+    }
+    $xe = Select-AutoXEntry
+    if (-not $xe) { Write-Host "X: no 未使用 X entry available -- skip."; return }
+    $num = Get-RichText $xe.properties.'原文番号'
+    $tA  = Get-RichText $xe.properties.'リライト本文'
+    $tB  = Get-RichText $xe.properties.'リライト本文B'
+    Write-Host "=== X-variety topic: $num ($($xe.id)) ==="
+    $audA = New-TtsAudio $tA "xvoice_A.mp3"
+    $audB = if ($tB.Trim()) { New-TtsAudio $tB "xvoice_B.mp3" } else { $null }
+    $res = @()
+    for ($i = 1; $i -le $XCount; $i++) {
+        $v = if (($i % 2 -eq 0) -and $audB) { "B" } else { "A" }
+        $audio = if ($v -eq "B") { $audB } else { $audA }
+        $text  = if ($v -eq "B") { $tB } else { $tA }
+        $tag   = "X${num}_${v}_c${i}"
+        Write-Host "--- building $tag ($i/$XCount) ---"
+        try { $res += (Build-One $audio $text $tag).Plain } catch { Write-Warning "  X cut $tag failed: $_" }
+    }
+    if ($res.Count -gt 0) {
+        Set-NotionStatus $xe.id "動画化済"
+        Set-Content -Path $statePath -Value $today -Encoding ASCII
+    }
+    Write-Host "X-variety produced $($res.Count) cut(s) for $num."
+}
+
 # --- AUTO buffer mode (scheduled task) -----------------------------------------
 # 1) archive every 使用済み topic's buffered videos, 2) generate $Count cuts of the
-# newest still-unposted topic (cuts cycle A/B audio for 誤読 redundancy), 3) mark it
-# 動画化済. Re-running (2x/day) keeps topping the buffer up to $MaxPerTopic.
+# newest still-unposted ショート動画 topic, 3) mark it 動画化済, 4) on X-days also inject
+# one X-format video. Re-running (2x/day) keeps topping the buffer up to $MaxPerTopic.
 if ($Auto) {
     Import-DotEnv
     Write-Host "=== AUTO buffer mode (Count=$Count, MaxPerTopic=$MaxPerTopic) ==="
@@ -798,36 +878,37 @@ if ($Auto) {
 
     $page = Select-AutoEntry
     if (-not $page) {
-        Write-Host "Auto: nothing to generate (queue empty, or newest topic's buffer is full)."
-        return
+        Write-Host "Auto: no ショート動画 topic to generate (queue empty, or newest topic's buffer is full)."
+    } else {
+        $num   = Get-RichText $page.properties.'原文番号'
+        $textA = Get-RichText $page.properties.'リライト本文'
+        $textB = Get-RichText $page.properties.'リライト本文B'
+        $urlA  = $page.properties.'音声URL_A'.url
+        $urlB  = $page.properties.'音声URL_B'.url
+        Write-Host "Auto topic: $num ($($page.id))  buffered so far=$(Get-TopicCount $num)"
+
+        $audioA = if ($urlA) { Get-Audio $urlA "voice_A.mp3" } else { $null }
+        $audioB = if ($urlB) { Get-Audio $urlB "voice_B.mp3" } else { $null }
+        if (-not $audioA) { throw "Auto: topic $num has no 音声URL_A." }
+
+        # cut plan: cycle A,B,A,... falling back to A when B is unavailable
+        $results = @()
+        for ($i = 1; $i -le $Count; $i++) {
+            $v = if (($i % 2 -eq 0) -and $audioB) { "B" } else { "A" }
+            $audio = if ($v -eq "B") { $audioB } else { $audioA }
+            $text  = if ($v -eq "B") { $textB } else { $textA }
+            $tag   = "${num}_${v}_c${i}"
+            Write-Host "--- building $tag ($i/$Count) ---"
+            try { $results += (Build-One $audio $text $tag).Plain }
+            catch { Write-Warning "  cut $tag failed: $_" }
+        }
+        if ($results.Count -gt 0) { Set-NotionStatus $page.id "動画化済" }
+        Write-Host "Auto produced $($results.Count) cut(s) for $num (buffer total=$(Get-TopicCount $num)):"
+        $results | ForEach-Object { Write-Host "  $_" }
     }
-    $num   = Get-RichText $page.properties.'原文番号'
-    $textA = Get-RichText $page.properties.'リライト本文'
-    $textB = Get-RichText $page.properties.'リライト本文B'
-    $urlA  = $page.properties.'音声URL_A'.url
-    $urlB  = $page.properties.'音声URL_B'.url
-    Write-Host "Auto topic: $num ($($page.id))  buffered so far=$(Get-TopicCount $num)"
 
-    $audioA = if ($urlA) { Get-Audio $urlA "voice_A.mp3" } else { $null }
-    $audioB = if ($urlB) { Get-Audio $urlB "voice_B.mp3" } else { $null }
-    if (-not $audioA) { throw "Auto: topic $num has no 音声URL_A." }
-
-    # cut plan: cycle A,B,A,... falling back to A when B is unavailable
-    $results = @()
-    for ($i = 1; $i -le $Count; $i++) {
-        $v = if (($i % 2 -eq 0) -and $audioB) { "B" } else { "A" }
-        $audio = if ($v -eq "B") { $audioB } else { $audioA }
-        $text  = if ($v -eq "B") { $textB } else { $textA }
-        $tag   = "${num}_${v}_c${i}"
-        Write-Host "--- building $tag ($i/$Count) ---"
-        try { $results += (Build-One $audio $text $tag).Plain }
-        catch { Write-Warning "  cut $tag failed: $_" }
-    }
-    if ($results.Count -gt 0) { Set-NotionStatus $page.id "動画化済" }
-
+    Invoke-AutoX   # occasional X-format variety (火・金)
     Write-Host "==="
-    Write-Host "Auto produced $($results.Count) cut(s) for $num (buffer total=$(Get-TopicCount $num)):"
-    $results | ForEach-Object { Write-Host "  $_" }
     return
 }
 
