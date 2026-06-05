@@ -28,6 +28,18 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# ffmpeg = transcode non-mp3 drops (wav/m4a/...) into the library's mp3 convention
+function Resolve-Ffmpeg {
+    if ($env:FFMPEG_DIR) { $p = Join-Path $env:FFMPEG_DIR "ffmpeg.exe"; if (Test-Path $p) { return $p } }
+    $c = Get-Command ffmpeg -ErrorAction SilentlyContinue
+    if ($c) { return $c.Source }
+    $fb = "C:\Users\yuton\Downloads\ffmpeg-8.0.1-essentials_build\ffmpeg-8.0.1-essentials_build\bin\ffmpeg.exe"
+    if (Test-Path $fb) { return $fb }
+    return $null
+}
+$ffmpeg = Resolve-Ffmpeg
+
 if (-not $Inbox) { $Inbox = Join-Path $MusicRoot "_inbox" }
 if (-not (Test-Path $MusicRoot)) { throw "MusicRoot not found: $MusicRoot" }
 if (-not (Test-Path $Inbox)) { Write-Host "No inbox at $Inbox -- nothing to ingest."; return }
@@ -54,21 +66,25 @@ foreach ($md in $moodDirs) {
     $files = Get-ChildItem -LiteralPath $md.FullName -File -EA SilentlyContinue |
         Where-Object { $Extensions -contains $_.Extension.ToLower() } | Sort-Object Name
     foreach ($f in $files) {
-        if ($f.Extension.ToLower() -ne ".mp3") {
-            Write-Warning "  $($f.Name): not .mp3 (got $($f.Extension)) -- skip (convert manually for now)"
-            $skipped++; continue
-        }
         $num = Get-NextNum $mood
         $newName = "{0}_{1}_{2:D2}.mp3" -f $Prefix, $mood, $num
         $dest = Join-Path $MusicRoot $newName
         while (Test-Path $dest) { $num++; $newName = "{0}_{1}_{2:D2}.mp3" -f $Prefix,$mood,$num; $dest = Join-Path $MusicRoot $newName }
+        $isMp3 = ($f.Extension.ToLower() -eq ".mp3")
         if ($WhatIf) {
-            Write-Host "  [WhatIf] $newName  <-  $($f.Name)"
-        } else {
-            Move-Item -LiteralPath $f.FullName -Destination $dest
-            Write-Host "  + $newName  <-  $($f.Name)"
-            $mapLines += "$newName <- $($f.Name)"
+            Write-Host ("  [WhatIf] {0}  <-  {1}{2}" -f $newName, $f.Name, $(if ($isMp3) { "" } else { " (transcode -> mp3)" }))
+            $added++; continue
         }
+        if ($isMp3) {
+            Move-Item -LiteralPath $f.FullName -Destination $dest
+        } else {
+            if (-not $ffmpeg) { Write-Warning "  $($f.Name): need ffmpeg to transcode $($f.Extension) -- skip"; $skipped++; continue }
+            & $ffmpeg -hide_banner -loglevel error -y -i $f.FullName -c:a libmp3lame -q:a 2 $dest 2>$null
+            if (-not (Test-Path $dest)) { Write-Warning "  $($f.Name): transcode failed -- skip"; $skipped++; continue }
+            Remove-Item -LiteralPath $f.FullName -Force
+        }
+        Write-Host "  + $newName  <-  $($f.Name)"
+        $mapLines += "$newName <- $($f.Name)"
         $added++
     }
 }
@@ -83,6 +99,16 @@ if (-not $WhatIf -and $mapLines.Count -gt 0) {
     [System.IO.File]::AppendAllText($mapPath, $prefix + (($mapLines -join "`r`n") + "`r`n"), $utf8)
 }
 
+# count with bounded retry: OneDrive can briefly return an empty enumeration right
+# after writes (a false 0). Post-ingest the library is non-empty, so retry until >0.
+function Get-LibCount {
+    for ($i = 0; $i -lt 5; $i++) {
+        $n = @(Get-ChildItem -LiteralPath $MusicRoot -Filter "$($Prefix)_*.mp3" -File -EA SilentlyContinue).Count
+        if ($n -gt 0 -or $added -eq 0) { return $n }
+        Start-Sleep -Milliseconds 300
+    }
+    return $n
+}
 Write-Host "==="
 Write-Host "Ingested $added file(s)$(if ($skipped) { ", skipped $skipped non-mp3" })$(if ($WhatIf) { ' (WhatIf -- nothing moved)' })."
-Write-Host "Library now: $(@(Get-ChildItem -LiteralPath $MusicRoot -Filter "$($Prefix)_*.mp3" -File -EA SilentlyContinue).Count) tracks in $MusicRoot"
+Write-Host "Library now: $(Get-LibCount) tracks in $MusicRoot"
