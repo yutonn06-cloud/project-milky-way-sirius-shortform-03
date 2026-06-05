@@ -19,6 +19,9 @@
 # .env (repo root): NOTION_TOKEN [, NOTION_DATABASE_ID]
 # Requires ffmpeg/ffprobe on PATH (or set $env:FFMPEG_DIR).
 # Captions need whisper.cpp at $WhisperDir + a ggml model at $WhisperModel.
+# NSFW gate (ON by default, FAIL-CLOSED): needs `py` + tools/nsfw-scan.py
+#   (pip install nudenet onnxruntime opencv-python-headless). Scans every
+#   clip segment; nudity -> re-plan; can't scan -> abort. -NoNsfwScan bypasses.
 #
 # NOTE: save this file UTF-8 *with BOM* (Windows PowerShell 5.1 reads .ps1 as
 # ANSI otherwise and mangles the Japanese folder/property literals).
@@ -36,6 +39,8 @@ param(
     [double]$MusicVolume   = 0.18,
     [int]$SpeedInserts     = -1,             # -1 = auto (random 0-2); 0 = none; N = fixed
     [ValidateSet("auto","on","off")] [string]$Cinematic = "auto",
+    [double]$NsfwThreshold = 0.35,           # nudity-detection score threshold (lower = stricter)
+    [switch]$NoNsfwScan,                     # DANGER: disable the nudity gate (off by default = gate ON)
     [string]$WhisperDir    = "C:\Users\yuton\whisper-cpp\Release",
     [string]$WhisperModel  = "C:\Users\yuton\whisper-cpp\models\ggml-small.bin",
     [string]$CaptionFont   = "Meiryo",
@@ -367,12 +372,62 @@ $script:CinematicLooks = @(
     "eq=contrast=1.05:saturation=1.25,colorbalance=rs=-0.04:bs=0.06,vignette=PI/5"
 )
 
+# --- NSFW gate: sample frames from each piece's source segment, scan with NudeNet ---
+# Fail-CLOSED: if the scanner can't run, the build aborts (unless -NoNsfwScan).
+function Test-PiecesSafe($pieces) {
+    if ($NoNsfwScan) { return @{ Safe=$true; Fatal=$false; Reason='scan disabled (-NoNsfwScan)' } }
+    $py = Get-Command py -ErrorAction SilentlyContinue
+    $scanScript = Join-Path $PSScriptRoot "nsfw-scan.py"
+    if (-not $py -or -not (Test-Path $scanScript)) {
+        return @{ Safe=$false; Fatal=$true; Reason='NSFW scanner unavailable (py / nsfw-scan.py). Pass -NoNsfwScan only if you accept the risk.' }
+    }
+    $ErrorActionPreference = 'Continue'
+    $frames = @()
+    for ($i = 0; $i -lt $pieces.Count; $i++) {
+        $p = $pieces[$i]
+        $srcDur = [math]::Max(1, $p.OutDur * $p.Speed)
+        $count = [math]::Min(12, [math]::Max(3, [int][math]::Ceiling($srcDur / 2.5)))
+        for ($k = 0; $k -lt $count; $k++) {
+            $ts = $p.Start + ($srcDur * ($k + 0.5) / $count)
+            $fp = Join-Path $tmp ("nsfw_{0}_{1}.jpg" -f $i, $k)
+            & $ffmpeg -hide_banner -loglevel error -y -ss $ts -i $p.File -frames:v 1 -q:v 4 $fp 2>$null | Out-Null
+            if (Test-Path $fp) { $frames += $fp }
+        }
+    }
+    if ($frames.Count -eq 0) { return @{ Safe=$false; Fatal=$true; Reason='no frames extracted for NSFW scan' } }
+    $json = & py $scanScript --threshold $NsfwThreshold @frames 2>&1
+    $code = $LASTEXITCODE
+    Remove-Item $frames -Force -ErrorAction SilentlyContinue
+    if ($code -eq 0) { return @{ Safe=$true; Fatal=$false; Reason='clean' } }
+    if ($code -eq 2) {
+        try { $r = ($json | Select-Object -Last 1) | ConvertFrom-Json } catch { $r = $null }
+        $hit = if ($r -and $r.hits) { (($r.hits | ForEach-Object { "$($_.class)@$($_.score)" }) | Select-Object -Unique) -join ", " } else { "nudity" }
+        return @{ Safe=$false; Fatal=$false; Reason="NUDITY DETECTED ($hit)" }
+    }
+    return @{ Safe=$false; Fatal=$true; Reason="NSFW scanner error: $json" }
+}
+
 # --- one variant -> one mp4 ---
 function Build-One($audioPath, $caption, $tag) {
     $videoDur = [math]::Round((Get-Duration $audioPath), 2)
     if ($videoDur -le 0) { throw "audio duration is zero: $audioPath" }
 
-    $pieces = @(Get-VideoPieces $videoDur)
+    # plan clips, then run the NSFW gate; re-plan on detected nudity, abort if no safe selection
+    $pieces = $null
+    $maxTries = 8
+    for ($try = 1; $try -le $maxTries; $try++) {
+        $cand = @(Get-VideoPieces $videoDur)
+        $audit = Test-PiecesSafe $cand
+        if ($audit.Safe) {
+            $pieces = $cand
+            if (-not $NoNsfwScan) { Write-Host "  [NSFW] audit OK ($($audit.Reason))" } else { Write-Warning "  [NSFW] gate DISABLED (-NoNsfwScan)" }
+            break
+        }
+        if ($audit.Fatal) { throw "[NSFW] $($audit.Reason)" }
+        Write-Warning "  [NSFW] $($audit.Reason) -- discarding selection, re-planning ($try/$maxTries)"
+        if ($try -eq $maxTries) { throw "[NSFW] no safe clip selection after $maxTries tries -- aborting (no video produced). Review the 通常速度/高速 pools." }
+    }
+
     $music  = Get-ChildItem -LiteralPath $MusicRoot -Filter *.mp3 -File -Recurse | Get-Random
     if (-not $music) { throw "No .mp3 found under $MusicRoot" }
 
