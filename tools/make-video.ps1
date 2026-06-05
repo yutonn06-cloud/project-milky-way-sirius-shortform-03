@@ -67,6 +67,10 @@ param(
     [switch]$Srt,                            # ALSO output a voice-synced .srt (needs whisper)
     [switch]$CapCutDraft,                    # ALSO inject video+SRT into a reused CapCut draft (needs -Srt)
     [string]$CapCutName    = "SIRIUS_SHORT_CNT",  # the ONE reused Sirius CapCut project (swap each run)
+    # --- AUTO buffer mode (for the scheduled task: full-auto up to video) ---
+    [switch]$Auto,                           # buffer mode: auto-archive 使用済み, then make N cuts of the newest unposted topic
+    [int]$Count           = 3,               # videos per -Auto run (cuts cycling A/B audio)
+    [int]$MaxPerTopic     = 12,              # runaway guard: skip a topic once it has this many buffered cuts
     [switch]$KeepIntermediate
 )
 
@@ -78,9 +82,10 @@ if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out
 
 # type-split output folders (探しやすさ優先・手で Filmora に入れる前提)。各タイプは
 # 自分のサブフォルダへ → 「字幕なし」を開けば Filmora 取込用が新しい順に並ぶ。
-$DirPlain = Join-Path $OutDir "字幕なし"   # video-only (Filmora import) -- 主成果物
-$DirCap   = Join-Path $OutDir "字幕あり"   # burned-caption mp4 (-BurnCaption 時のみ)
-$DirSrt   = Join-Path $OutDir "srt"         # voice-synced SRT (-Srt 時のみ)
+$DirPlain   = Join-Path $OutDir "字幕なし"   # video-only buffer (Filmora import) -- 主成果物
+$DirCap     = Join-Path $OutDir "字幕あり"   # burned-caption mp4 (-BurnCaption 時のみ)
+$DirSrt     = Join-Path $OutDir "srt"         # voice-synced SRT (-Srt 時のみ)
+$DirArchive = Join-Path $OutDir "投稿済"     # archive of posted topics (auto-moved when Notion=使用済み)
 function Initialize-Dir($d) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }; return $d }
 
 # --- resolve ffmpeg/ffprobe ---
@@ -138,10 +143,119 @@ function Get-RichText($prop) {
     return ""
 }
 
+function Get-NotionHeaders { @{ "Authorization" = "Bearer $($env:NOTION_TOKEN)"; "Notion-Version" = "2022-06-28" } }
+function Get-NotionDbId { if ($env:NOTION_DATABASE_ID) { $env:NOTION_DATABASE_ID } else { "087eff43-caa5-41ff-944e-7982f68faef8" } }
+
+# generic ショート動画 query with a caller-supplied extra-filter array (UTF-8 safe POST)
+function Invoke-NotionFilter($extraFilters, $pageSize = 20) {
+    $and = @(@{ property = "投稿先"; select = @{ equals = "ショート動画" } }) + $extraFilters
+    $bodyObj = @{
+        filter    = @{ and = $and }
+        sorts     = @(@{ timestamp = "created_time"; direction = "descending" })
+        page_size = $pageSize
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($bodyObj | ConvertTo-Json -Depth 8))
+    $r = Invoke-RestMethod -Uri "https://api.notion.com/v1/databases/$(Get-NotionDbId)/query" -Method Post `
+            -Headers (Get-NotionHeaders) -Body $bytes -ContentType "application/json; charset=utf-8"
+    return $r.results
+}
+
+# entries eligible for video generation: audio ready AND not yet posted (≠使用済み)
+function Get-AutoEntries {
+    Invoke-NotionFilter @(
+        @{ property = "音声URL_A"; url = @{ is_not_empty = $true } },
+        @{ property = "ステータス"; select = @{ does_not_equal = "使用済み" } }
+    )
+}
+# entries the operator has marked posted -> their buffer videos get archived
+function Get-PostedEntries {
+    Invoke-NotionFilter @( @{ property = "ステータス"; select = @{ equals = "使用済み" } } ) 100
+}
+
+function Set-NotionStatus($pageId, $name) {
+    $clean = $pageId -replace '-', ''
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes((@{ properties = @{ "ステータス" = @{ select = @{ name = $name } } } } | ConvertTo-Json -Depth 6))
+    try {
+        Invoke-RestMethod -Uri "https://api.notion.com/v1/pages/$clean" -Method Patch `
+            -Headers (Get-NotionHeaders) -Body $bytes -ContentType "application/json; charset=utf-8" | Out-Null
+    } catch { Write-Warning "  Notion status write failed ($name): $_" }
+}
+
+# buffered cut count for a topic (原文番号) -- files are auto_<num>_*; the trailing
+# underscore makes 原文38 vs 原文387 unambiguous.
+function Get-TopicCount($num) {
+    if (-not (Test-Path $DirPlain)) { return 0 }
+    @(Get-ChildItem -LiteralPath $DirPlain -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "auto_${num}_*" }).Count
+}
+
+# move every buffered file of each 使用済み topic into 投稿済\ (re-post prevention + tidy)
+function Invoke-ArchivePosted {
+    $posted = @(Get-PostedEntries)
+    if ($posted.Count -eq 0) { return 0 }
+    $moved = 0
+    foreach ($p in $posted) {
+        $num = Get-RichText $p.properties.'原文番号'
+        if (-not $num) { continue }
+        $files = @(Get-ChildItem -LiteralPath $DirPlain -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "auto_${num}_*" })
+        if ($files.Count -eq 0) { continue }
+        $dest = Initialize-Dir $DirArchive
+        foreach ($f in $files) {
+            Move-Item -LiteralPath $f.FullName -Destination (Join-Path $dest $f.Name) -Force
+            Write-Host "  archived: $($f.Name)"
+            $moved++
+        }
+    }
+    return $moved
+}
+
+# newest not-posted topic whose buffer isn't already full (runaway guard)
+function Select-AutoEntry {
+    foreach ($e in @(Get-AutoEntries)) {
+        $num = Get-RichText $e.properties.'原文番号'
+        if (-not $num) { continue }
+        $have = Get-TopicCount $num
+        if ($have -lt $MaxPerTopic) { return $e }
+        Write-Host "  topic $num buffer full ($have >= $MaxPerTopic) -- skip"
+    }
+    return $null
+}
+
+function Get-Audio($url, $name) {
+    $dl = Join-Path $tmp $name
+    Invoke-WebRequest -Uri $url -OutFile $dl -UseBasicParsing
+    return $dl
+}
+
+# retry a flaky IO action (transient file locks: OneDrive/AV touching a file we just wrote)
+function Invoke-WithRetry([scriptblock]$action, [int]$tries = 6, [int]$delayMs = 250) {
+    for ($i = 1; $i -le $tries; $i++) {
+        try { return (& $action) }
+        catch { if ($i -eq $tries) { throw }; Start-Sleep -Milliseconds ($delayMs * $i) }
+    }
+}
+
+# rotation state lives OUTSIDE OneDrive (it locked the file between rapid cuts) and
+# outside the git repo -- machine-local + persistent.
+$script:RotationStatePath = $null
+function Get-RotationStatePath {
+    if ($script:RotationStatePath) { return $script:RotationStatePath }
+    $dir = Join-Path $env:LOCALAPPDATA "sirius-make-video"
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+    $p = Join-Path $dir "rotation-state.json"
+    $legacy = Join-Path $MaterialsRoot ".rotation-state.json"   # migrate old OneDrive state once
+    if (-not (Test-Path $p) -and (Test-Path $legacy)) {
+        try { Copy-Item -LiteralPath $legacy -Destination $p -Force } catch {}
+    }
+    $script:RotationStatePath = $p
+    return $p
+}
+
 # --- base-clip rotation: avoid reusing the same (file, 60s offset bucket) ---
 function Select-BaseClip($poolDir, $needSeconds) {
-    $statePath = Join-Path $MaterialsRoot ".rotation-state.json"
-    $state = if (Test-Path $statePath) { Get-Content $statePath -Raw | ConvertFrom-Json } else { $null }
+    $statePath = Get-RotationStatePath
+    $state = if (Test-Path $statePath) { Invoke-WithRetry { Get-Content $statePath -Raw -ErrorAction Stop } | ConvertFrom-Json } else { $null }
     $used = @{}
     if ($state -and $state.used) { foreach ($k in $state.used) { $used[$k] = $true } }
 
@@ -173,7 +287,8 @@ function Select-BaseClip($poolDir, $needSeconds) {
     $pick.Start = $pick.Offset + $jitter
 
     $newUsed = @($used.Keys) + @($pick.Key) | Select-Object -Unique
-    @{ used = $newUsed; updated = (Get-Date).ToString("o") } | ConvertTo-Json -Depth 4 | Set-Content -Path $statePath -Encoding UTF8
+    $json = @{ used = $newUsed; updated = (Get-Date).ToString("o") } | ConvertTo-Json -Depth 4
+    Invoke-WithRetry { Set-Content -Path $statePath -Value $json -Encoding UTF8 -ErrorAction Stop }
     return $pick
 }
 
@@ -664,6 +779,51 @@ function Invoke-CapCutDraft($plain, $srt, $name) {
     $ErrorActionPreference = 'Continue'
     & py $tool --video $plain --srt $srt --name $name 2>&1 | ForEach-Object { Write-Host "    $_" }
     if ($LASTEXITCODE -ne 0) { Write-Warning "  CapCut draft build failed (exit $LASTEXITCODE)." }
+}
+
+# --- AUTO buffer mode (scheduled task) -----------------------------------------
+# 1) archive every 使用済み topic's buffered videos, 2) generate $Count cuts of the
+# newest still-unposted topic (cuts cycle A/B audio for 誤読 redundancy), 3) mark it
+# 動画化済. Re-running (2x/day) keeps topping the buffer up to $MaxPerTopic.
+if ($Auto) {
+    Import-DotEnv
+    Write-Host "=== AUTO buffer mode (Count=$Count, MaxPerTopic=$MaxPerTopic) ==="
+    $archived = Invoke-ArchivePosted
+    if ($archived) { Write-Host "Archived $archived file(s) of 使用済み topics." }
+
+    $page = Select-AutoEntry
+    if (-not $page) {
+        Write-Host "Auto: nothing to generate (queue empty, or newest topic's buffer is full)."
+        return
+    }
+    $num   = Get-RichText $page.properties.'原文番号'
+    $textA = Get-RichText $page.properties.'リライト本文'
+    $textB = Get-RichText $page.properties.'リライト本文B'
+    $urlA  = $page.properties.'音声URL_A'.url
+    $urlB  = $page.properties.'音声URL_B'.url
+    Write-Host "Auto topic: $num ($($page.id))  buffered so far=$(Get-TopicCount $num)"
+
+    $audioA = if ($urlA) { Get-Audio $urlA "voice_A.mp3" } else { $null }
+    $audioB = if ($urlB) { Get-Audio $urlB "voice_B.mp3" } else { $null }
+    if (-not $audioA) { throw "Auto: topic $num has no 音声URL_A." }
+
+    # cut plan: cycle A,B,A,... falling back to A when B is unavailable
+    $results = @()
+    for ($i = 1; $i -le $Count; $i++) {
+        $v = if (($i % 2 -eq 0) -and $audioB) { "B" } else { "A" }
+        $audio = if ($v -eq "B") { $audioB } else { $audioA }
+        $text  = if ($v -eq "B") { $textB } else { $textA }
+        $tag   = "${num}_${v}_c${i}"
+        Write-Host "--- building $tag ($i/$Count) ---"
+        try { $results += (Build-One $audio $text $tag).Plain }
+        catch { Write-Warning "  cut $tag failed: $_" }
+    }
+    if ($results.Count -gt 0) { Set-NotionStatus $page.id "動画化済" }
+
+    Write-Host "==="
+    Write-Host "Auto produced $($results.Count) cut(s) for $num (buffer total=$(Get-TopicCount $num)):"
+    $results | ForEach-Object { Write-Host "  $_" }
+    return
 }
 
 # --- resolve inputs (Notion or explicit) ---
