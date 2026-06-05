@@ -45,7 +45,7 @@ param(
     [string]$WhisperDir    = "C:\Users\yuton\whisper-cpp\Release",
     [string]$WhisperModel  = "C:\Users\yuton\whisper-cpp\models\ggml-small.bin",
     [string]$CaptionFont   = "BIZ UDPGothic",
-    [int]$CaptionFontSize  = 74,
+    [int]$CaptionFontSize  = 68,
     [int]$CaptionMarginLR  = 48,             # side margins (720 wide) -> controls wrap width
     [int]$CaptionMarginV   = 540,            # distance above bottom -> ~just above centre
     [int]$CaptionMaxLines  = 3,              # cap lines per caption (2-3)
