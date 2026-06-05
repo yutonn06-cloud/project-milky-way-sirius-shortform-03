@@ -31,7 +31,7 @@ param(
     [string]$AudioFile,
     [string]$ScriptText,
     [string]$MaterialsRoot = "C:\Users\yuton\OneDrive\Desktop\編集済みサンプル素材集",
-    [string]$MusicRoot     = "C:\Users\yuton\OneDrive\Desktop\Mureka",
+    [string]$MusicRoot     = "C:\Users\yuton\OneDrive\Desktop\Music\Sirius",
     [string]$OutDir        = "C:\Users\yuton\OneDrive\Desktop\自動生成動画",
     [double]$MusicVolume   = 0.18,
     [int]$SpeedInserts     = -1,             # -1 = auto (random 0-2); 0 = none; N = fixed
