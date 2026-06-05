@@ -717,10 +717,13 @@ function Build-One($audioPath, $caption, $tag) {
     $pieces = @(Get-VideoPieces $videoDur)
     if ($NoNsfwScan) { Write-Warning "  [NSFW] gate DISABLED (-NoNsfwScan)" } else { Write-Host "  [NSFW] clean-window selection OK" }
 
-    # pick BGM recursively, but SKIP _-prefixed folders (e.g. _inbox = un-ingested drops)
-    $music  = Get-ChildItem -LiteralPath $MusicRoot -Filter *.mp3 -File -Recurse |
-        Where-Object { $_.FullName -notmatch '\\_[^\\]*\\' } | Get-Random
-    if (-not $music) { throw "No .mp3 found under $MusicRoot (excluding _inbox)" }
+    # pick BGM recursively (any audio format -- ffmpeg handles wav/mp3/m4a/...), but
+    # SKIP _-prefixed folders (e.g. _inbox = un-ingested drops)
+    $audioExt = @('.mp3','.wav','.m4a','.flac','.ogg','.aac')
+    $music  = Get-ChildItem -LiteralPath $MusicRoot -File -Recurse |
+        Where-Object { $audioExt -contains $_.Extension.ToLower() -and $_.FullName -notmatch '\\_[^\\]*\\' } |
+        Get-Random
+    if (-not $music) { throw "No audio (mp3/wav/...) found under $MusicRoot (excluding _inbox)" }
 
     $useCinematic = switch ($Cinematic) { "on" { $true } "off" { $false } default { (Get-Random -Minimum 0 -Maximum 100) -lt 60 } }
     $grade = if ($useCinematic) { $script:CinematicLooks | Get-Random } else { $null }
