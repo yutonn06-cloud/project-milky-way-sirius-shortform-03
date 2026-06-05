@@ -39,9 +39,10 @@ param(
     [string]$WhisperDir    = "C:\Users\yuton\whisper-cpp\Release",
     [string]$WhisperModel  = "C:\Users\yuton\whisper-cpp\models\ggml-small.bin",
     [string]$CaptionFont   = "Meiryo",
-    [int]$CaptionFontSize  = 58,
-    [int]$CaptionMarginLR  = 60,             # side margins (720 wide) -> controls wrap width
+    [int]$CaptionFontSize  = 66,
+    [int]$CaptionMarginLR  = 48,             # side margins (720 wide) -> controls wrap width
     [int]$CaptionMarginV   = 540,            # distance above bottom -> ~just above centre
+    [int]$CaptionMaxLines  = 3,              # cap lines per caption (2-3)
     [switch]$NoCaption,
     [switch]$KeepIntermediate
 )
@@ -160,7 +161,7 @@ function Get-VideoPieces($D) {
         $speed = if ($Pool -eq "高速") { 1.0 } else { 2.0 }
         $need  = [math]::Ceiling($D * $speed) + 1
         $base  = Select-BaseClip (Join-Path $MaterialsRoot $Pool) $need
-        return @(@{ File=$base.File; Name=$base.Name; Start=$base.Start; OutDur=$D; Speed=$speed })
+        return @(@{ File=$base.File; Name=$base.Name; Start=$base.Start; OutDur=$D; Speed=$speed; Kind='main' })
     }
 
     $insertDurs = @(1..$K | ForEach-Object { [math]::Round((Get-Random -Minimum 3.0 -Maximum 5.0), 2) })
@@ -169,7 +170,7 @@ function Get-VideoPieces($D) {
         # not enough room -> fall back to single main piece
         $need = [math]::Ceiling($D * 2) + 1
         $base = Select-BaseClip $normalDir $need
-        return @(@{ File=$base.File; Name=$base.Name; Start=$base.Start; OutDur=$D; Speed=2.0 })
+        return @(@{ File=$base.File; Name=$base.Name; Start=$base.Start; OutDur=$D; Speed=2.0; Kind='main' })
     }
 
     # split normalTotal into K+1 roughly-equal parts
@@ -184,13 +185,13 @@ function Get-VideoPieces($D) {
     $pieces = @()
     $cursor = [double]$main.Start
     for ($i = 0; $i -lt ($K + 1); $i++) {
-        $pieces += @{ File=$main.File; Name=$main.Name; Start=[math]::Round($cursor,2); OutDur=$parts[$i]; Speed=2.0 }
+        $pieces += @{ File=$main.File; Name=$main.Name; Start=[math]::Round($cursor,2); OutDur=$parts[$i]; Speed=2.0; Kind='main' }
         $cursor += $parts[$i] * 2
         if ($i -lt $K) {
             $fc = $fastClips | Get-Random
             $fdur = Get-Duration $fc.FullName
             $fstart = if ($fdur -gt $insertDurs[$i] + 1) { Get-Random -Minimum 0 -Maximum ([int]($fdur - $insertDurs[$i] - 1)) } else { 0 }
-            $pieces += @{ File=$fc.FullName; Name=$fc.Name; Start=$fstart; OutDur=$insertDurs[$i]; Speed=1.0 }
+            $pieces += @{ File=$fc.FullName; Name=$fc.Name; Start=$fstart; OutDur=$insertDurs[$i]; Speed=1.0; Kind='insert' }
         }
     }
     return $pieces
@@ -212,22 +213,30 @@ function Format-AssTime($sec) {
     if ($cs -ge 100) { $cs = 99 }
     return ("{0}:{1:D2}:{2:D2}.{3:D2}" -f $h,$m,$s,$cs)
 }
-# libass won't auto-wrap spaceless Japanese; pre-wrap into balanced lines (no orphans), prefer breaking after 、。
-function Format-CaptionWrap($text, $maxChars) {
-    $L = $text.Length
-    if ($L -le $maxChars) { return $text }
-    $nLines = [math]::Ceiling($L / $maxChars)
-    $target = [math]::Ceiling($L / $nLines)
+# libass won't auto-wrap spaceless Japanese. Wrap into lines breaking ONLY at
+# natural boundaries: punctuation (、。！？) first, else after a particle
+# (は/が/を/に/で/と/…), so words like 統計 are never split. Hard-break only as
+# a last resort. Capped at $maxLines.
+function Get-WrapPoint($s, $limit) {
+    $lim = [math]::Min($limit, $s.Length)
+    # 1) latest punctuation at/under the limit
+    for ($i = $lim; $i -ge 2; $i--) { if ('、。！？・'.Contains([string]$s[$i-1])) { return $i } }
+    # 2) latest particle (break AFTER it), not too early on the line
+    $floor = [math]::Max(2, [int][math]::Ceiling($lim/2))
+    for ($i = $lim; $i -ge $floor; $i--) { if ('はがをにでとへものやかねよわばずるたぐ'.Contains([string]$s[$i-1])) { return $i } }
+    # 3) hard break (rare)
+    return $lim
+}
+function Format-CaptionWrap($text, $maxChars, $maxLines) {
+    if ($text.Length -le $maxChars) { return $text }
     $lines = New-Object System.Collections.ArrayList
-    $line = ""
-    foreach ($ch in $text.ToCharArray()) {
-        $line += $ch
-        if ($lines.Count -lt ($nLines - 1)) {
-            if ($line.Length -ge $target) { [void]$lines.Add($line); $line = "" }
-            elseif ($line.Length -ge ($target - 2) -and '、。！？'.Contains([string]$ch)) { [void]$lines.Add($line); $line = "" }
-        }
+    $s = $text
+    while ($s.Length -gt $maxChars -and $lines.Count -lt ($maxLines - 1)) {
+        $bp = Get-WrapPoint $s $maxChars
+        [void]$lines.Add($s.Substring(0, $bp))
+        $s = $s.Substring($bp)
     }
-    if ($line.Length -gt 0) { [void]$lines.Add($line) }
+    [void]$lines.Add($s)
     return ($lines -join '\N')
 }
 
@@ -282,25 +291,28 @@ function New-CaptionAss($audioPath, $scriptText, $assPath) {
         return $marks[$marks.Count-1].Time
     }
 
-    # known script -> phrase cues (<= ~2 lines each, tighter sync); drop trailing 出典 line
+    # known script -> caption cues; drop trailing 出典 line
     $clean = ($scriptText -replace '出典[:：][^\r\n]*','')
     $clean = ($clean -replace '[ \t\r\n]','').Trim()
-    $maxChars  = [math]::Max(7, [int][math]::Floor((720 - 2*$CaptionMarginLR) / $CaptionFontSize))
-    $maxPerCue = $maxChars * 2
-    $units = New-Object System.Collections.ArrayList
+    $maxChars = [math]::Max(6, [int][math]::Floor((720 - 2*$CaptionMarginLR) / $CaptionFontSize))
+    $cap = $maxChars * $CaptionMaxLines       # max chars per cue (<= maxLines lines)
+    # split into clauses at 、。！？ (delimiter kept) so cue & line breaks land on boundaries
+    $clauses = New-Object System.Collections.ArrayList
     $buf = ""
     foreach ($ch in $clean.ToCharArray()) {
         $buf += $ch
-        $isEnd   = '。！？'.Contains([string]$ch)
-        $isComma = '、'.Contains([string]$ch)
-        if ($isEnd -or ($isComma -and $buf.Length -ge $maxChars) -or ($buf.Length -ge $maxPerCue)) {
-            [void]$units.Add($buf); $buf = ""
-        }
+        if ('、。！？'.Contains([string]$ch)) { [void]$clauses.Add($buf); $buf = "" }
     }
-    if ($buf.Length -gt 0) {
-        if ($units.Count -gt 0 -and $buf.Length -le 4) { $units[$units.Count-1] = $units[$units.Count-1] + $buf }
-        else { [void]$units.Add($buf) }
+    if ($buf.Length -gt 0) { [void]$clauses.Add($buf) }
+    # pack whole clauses into cues up to the cap (never split a clause across cues unless it alone exceeds the cap)
+    $units = New-Object System.Collections.ArrayList
+    $acc = ""
+    foreach ($cl in $clauses) {
+        if ($acc -ne "" -and ($acc.Length + $cl.Length) -gt $cap) { [void]$units.Add($acc); $acc = "" }
+        $acc += $cl
+        if ($acc.Length -ge $cap) { [void]$units.Add($acc); $acc = "" }
     }
+    if ($acc.Length -gt 0) { [void]$units.Add($acc) }
     if ($units.Count -eq 0) { [void]$units.Add($clean) }
 
     $knownLen = $clean.Length
@@ -338,7 +350,7 @@ function New-CaptionAss($audioPath, $scriptText, $assPath) {
     foreach ($c in $cues) {
         $t = ($c.Text -replace '\r?\n','').Trim()
         if (-not $t) { continue }
-        $t = Format-CaptionWrap $t $maxChars
+        $t = Format-CaptionWrap $t $maxChars $CaptionMaxLines
         [void]$sb.AppendLine("Dialogue: 0,$(Format-AssTime $c.Start),$(Format-AssTime $c.End),Default,,0,0,0,,$t")
     }
     $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -368,6 +380,14 @@ function Build-One($audioPath, $caption, $tag) {
     $grade = if ($useCinematic) { $script:CinematicLooks | Get-Random } else { $null }
 
     Write-Host ("  pieces: " + (($pieces | ForEach-Object { "$($_.Name)@$($_.Start)s/$($_.OutDur)s x$($_.Speed)" }) -join "  |  "))
+    # report high-speed inserts in OUTPUT-timeline coordinates
+    $t0 = 0.0
+    foreach ($p in $pieces) {
+        if ($p.Kind -eq 'insert') {
+            Write-Host ("  >> 高速インサート: {0} を 出力 {1:N1}秒〜{2:N1}秒 に {3:N1}秒挿入" -f $p.Name, $t0, ($t0 + $p.OutDur), $p.OutDur)
+        }
+        $t0 += $p.OutDur
+    }
     Write-Host "  music: $($music.Name)"
     Write-Host "  cinematic: $(if ($grade) { $grade } else { 'none' })"
     Write-Host "  voice: $([System.IO.Path]::GetFileName($audioPath))  dur=$($videoDur)s"
