@@ -24,6 +24,8 @@ function Write-Log([string]$text) { [System.IO.File]::AppendAllText($log, $text 
 
 # capture all streams as one UTF-8 block (Tee + Out-File mixed encodings -> mojibake)
 Write-Log "==== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') auto run ===="
-$out = & (Join-Path $here "make-video.ps1") -Auto *>&1 | Out-String
+# -NoX: X auto-injection paused (User 2026-06-05) -- X scripts are read-optimised and
+# come out choppy via TTS; X-for-video is being curated manually for now.
+$out = & (Join-Path $here "make-video.ps1") -Auto -NoX *>&1 | Out-String
 Write-Log $out
 Write-Log "==== exit $LASTEXITCODE @ $(Get-Date -Format 'HH:mm:ss') ===="
