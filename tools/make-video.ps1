@@ -45,7 +45,7 @@ param(
     [string]$WhisperDir    = "C:\Users\yuton\whisper-cpp\Release",
     [string]$WhisperModel  = "C:\Users\yuton\whisper-cpp\models\ggml-small.bin",
     [string]$CaptionFont   = "Meiryo",
-    [int]$CaptionFontSize  = 66,
+    [int]$CaptionFontSize  = 74,
     [int]$CaptionMarginLR  = 48,             # side margins (720 wide) -> controls wrap width
     [int]$CaptionMarginV   = 540,            # distance above bottom -> ~just above centre
     [int]$CaptionMaxLines  = 3,              # cap lines per caption (2-3)
@@ -321,14 +321,23 @@ function Get-WrapPoint($s, $limit) {
 }
 function Format-CaptionWrap($text, $maxChars, $maxLines) {
     if ($text.Length -le $maxChars) { return $text }
+    # balance into roughly-equal lines (avoids a long line + tiny tail)
+    $nLines = [math]::Min($maxLines, [math]::Ceiling($text.Length / $maxChars))
+    $target = [math]::Ceiling($text.Length / $nLines)
     $lines = New-Object System.Collections.ArrayList
     $s = $text
-    while ($s.Length -gt $maxChars -and $lines.Count -lt ($maxLines - 1)) {
-        $bp = Get-WrapPoint $s $maxChars
+    while ($lines.Count -lt ($nLines - 1) -and $s.Length -gt $target) {
+        $bp = Get-WrapPoint $s ([math]::Min($maxChars, $target + 2))
+        if ($bp -lt 2) { $bp = [math]::Min($maxChars, $s.Length) }
         [void]$lines.Add($s.Substring(0, $bp))
         $s = $s.Substring($bp)
     }
     [void]$lines.Add($s)
+    # fold a tiny orphan tail (<=2 chars, e.g. "た。") back onto the previous line
+    while ($lines.Count -ge 2 -and $lines[$lines.Count-1].Length -le 2) {
+        $lines[$lines.Count-2] = $lines[$lines.Count-2] + $lines[$lines.Count-1]
+        $lines.RemoveAt($lines.Count-1)
+    }
     return ($lines -join '\N')
 }
 
@@ -360,71 +369,82 @@ function New-CaptionAss($audioPath, $scriptText, $assPath) {
     if ($cur) { $cur.Text = $txt; [void]$wsegs.Add($cur) }
     if ($wsegs.Count -eq 0) { Write-Warning "  no SRT segments -- skipping captions."; return $null }
 
-    # whisper char->time marks (linear within each segment)
-    $marks = New-Object System.Collections.ArrayList
-    [void]$marks.Add(@{ Char=0; Time=$wsegs[0].Start })
-    $cum = 0
-    foreach ($s in $wsegs) {
-        $cum += [math]::Max(1, ($s.Text -replace '\s','').Length)
-        [void]$marks.Add(@{ Char=$cum; Time=$s.End })
-    }
-    $totalW = $cum
     $audioDur = Get-Duration $audioPath
 
-    function Get-TimeAt($wchar) {
-        if ($wchar -le $marks[0].Char) { return $marks[0].Time }
-        for ($i=1; $i -lt $marks.Count; $i++) {
-            if ($wchar -le $marks[$i].Char) {
-                $c0=$marks[$i-1].Char; $c1=$marks[$i].Char; $t0=$marks[$i-1].Time; $t1=$marks[$i].Time
-                $f = if ($c1 -gt $c0) { ($wchar - $c0)/($c1 - $c0) } else { 0 }
-                return $t0 + $f*($t1 - $t0)
-            }
-        }
-        return $marks[$marks.Count-1].Time
-    }
-
-    # known script -> caption cues; drop trailing 出典 line
+    # known script (clean, no 出典 line)
     $clean = ($scriptText -replace '出典[:：][^\r\n]*','')
     $clean = ($clean -replace '[ \t\r\n]','').Trim()
-    $maxChars = [math]::Max(6, [int][math]::Floor((720 - 2*$CaptionMarginLR) / $CaptionFontSize))
-    $cap = $maxChars * $CaptionMaxLines       # max chars per cue (<= maxLines lines)
-    # split into clauses at 、。！？ (delimiter kept) so cue & line breaks land on boundaries
-    $clauses = New-Object System.Collections.ArrayList
-    $buf = ""
-    foreach ($ch in $clean.ToCharArray()) {
-        $buf += $ch
-        if ('、。！？'.Contains([string]$ch)) { [void]$clauses.Add($buf); $buf = "" }
-    }
-    if ($buf.Length -gt 0) { [void]$clauses.Add($buf) }
-    # pack whole clauses into cues up to the cap (never split a clause across cues unless it alone exceeds the cap)
-    $units = New-Object System.Collections.ArrayList
-    $acc = ""
-    foreach ($cl in $clauses) {
-        if ($acc -ne "" -and ($acc.Length + $cl.Length) -gt $cap) { [void]$units.Add($acc); $acc = "" }
-        $acc += $cl
-        if ($acc.Length -ge $cap) { [void]$units.Add($acc); $acc = "" }
-    }
-    if ($acc.Length -gt 0) { [void]$units.Add($acc) }
-    if ($units.Count -eq 0) { [void]$units.Add($clean) }
-
     $knownLen = $clean.Length
-    $scale = if ($knownLen -gt 0) { $totalW / $knownLen } else { 1 }
+    $maxChars = [math]::Max(6, [int][math]::Floor((720 - 2*$CaptionMarginLR) / $CaptionFontSize))
 
+    # VOICE-ALIGNED captions: whisper SEGMENT boundaries are the pauses in the spoken
+    # audio, so caption times follow them. The known text is mapped onto segments
+    # (proportional to each segment's whisper-text length, snapped to a natural
+    # boundary), then each segment's text is sub-split into clean phrase units
+    # (<= maxLines) and given a proportional slice of the segment's time -- so long
+    # phrases like 「けれど、」get their own beat while staying in sync with the voice.
+    $segLens = @($wsegs | ForEach-Object { [math]::Max(1, ($_.Text -replace '\s','').Length) })
+    $totalSeg = ($segLens | Measure-Object -Sum).Sum
+    $cap = $maxChars * $CaptionMaxLines
+    function Get-SnapIndex([int]$target) {
+        if ($target -le 0) { return 0 }
+        if ($target -ge $knownLen) { return $knownLen }
+        for ($r = 0; $r -le 5; $r++) {
+            foreach ($idx in @(($target + $r), ($target - $r))) {
+                if ($idx -ge 1 -and $idx -le $knownLen -and '。、！？'.Contains([string]$clean[$idx-1])) { return $idx }
+            }
+        }
+        for ($r = 0; $r -le 5; $r++) {
+            foreach ($idx in @(($target + $r), ($target - $r))) {
+                if ($idx -ge 1 -and $idx -le $knownLen -and 'はがをにでとへものやかねよわ'.Contains([string]$clean[$idx-1])) { return $idx }
+            }
+        }
+        return $target
+    }
+    function Split-IntoUnits([string]$t) {
+        $clauses = New-Object System.Collections.ArrayList; $b = ""
+        foreach ($c in $t.ToCharArray()) { $b += $c; if ('、。！？'.Contains([string]$c)) { [void]$clauses.Add($b); $b = "" } }
+        if ($b.Length -gt 0) { [void]$clauses.Add($b) }
+        $u = New-Object System.Collections.ArrayList; $acc = ""
+        foreach ($cl in $clauses) {
+            if ($acc -ne "" -and ($acc.Length + $cl.Length) -gt $cap) { [void]$u.Add($acc); $acc = "" }
+            $acc += $cl
+            if ($acc.Length -ge $cap) { [void]$u.Add($acc); $acc = "" }
+        }
+        if ($acc.Length -gt 0) { [void]$u.Add($acc) }
+        if ($u.Count -eq 0) { [void]$u.Add($t) }
+        return $u.ToArray()
+    }
     $cues = New-Object System.Collections.ArrayList
-    $pos = 0
-    foreach ($u in $units) {
-        $uLen = $u.Length
-        $startT = Get-TimeAt ($pos * $scale)
-        $endT   = Get-TimeAt (($pos + $uLen) * $scale)
-        $pos += $uLen
-        if ($endT -le $startT) { $endT = $startT + 0.8 }
-        [void]$cues.Add(@{ Start=$startT; End=$endT; Text=$u })
+    $cum = 0; $prevIdx = 0
+    for ($i = 0; $i -lt $wsegs.Count; $i++) {
+        $cum += $segLens[$i]
+        if ($i -eq $wsegs.Count - 1) { $idx = $knownLen } else { $idx = Get-SnapIndex ([int][math]::Round($knownLen * $cum / $totalSeg)) }
+        if ($idx -lt $prevIdx) { $idx = $prevIdx }
+        if ($idx -gt $knownLen) { $idx = $knownLen }
+        $segText = $clean.Substring($prevIdx, $idx - $prevIdx)
+        $prevIdx = $idx
+        if ($segText.Trim().Length -eq 0) { continue }
+        $s = [double]$wsegs[$i].Start; $e = [double]$wsegs[$i].End
+        $units = @(Split-IntoUnits $segText)
+        $segChars = [math]::Max(1, $segText.Length)
+        $cur = $s
+        for ($j = 0; $j -lt $units.Count; $j++) {
+            [void]$cues.Add(@{ Start=$cur; End=$e; Text=$units[$j] })
+            $cur = [math]::Round($cur + ($e - $s) * ($units[$j].Length / $segChars), 3)
+        }
     }
-    for ($i=1; $i -lt $cues.Count; $i++) {
-        if ($cues[$i].Start -lt $cues[$i-1].End) { $cues[$i].Start = $cues[$i-1].End }
-        if ($cues[$i].End -le $cues[$i].Start)   { $cues[$i].End = $cues[$i].Start + 0.6 }
+    if ($prevIdx -lt $knownLen -and $cues.Count -gt 0) {
+        $cues[$cues.Count-1].Text = $cues[$cues.Count-1].Text + $clean.Substring($prevIdx)
+    } elseif ($cues.Count -eq 0) {
+        [void]$cues.Add(@{ Start=0.0; End=$audioDur; Text=$clean })
     }
-    if ($cues.Count -gt 0 -and $audioDur -gt 0) { $cues[$cues.Count-1].End = [math]::Max($cues[$cues.Count-1].End, $audioDur) }
+    # hold each caption until the next one starts (no flicker in pauses); clamp last to audio end
+    for ($i = 0; $i -lt $cues.Count; $i++) {
+        if ($i -lt $cues.Count - 1) { $cues[$i].End = $cues[$i+1].Start }
+        if ($cues[$i].End -le $cues[$i].Start) { $cues[$i].End = $cues[$i].Start + 0.5 }
+    }
+    if ($audioDur -gt 0) { $cues[$cues.Count-1].End = [math]::Max($cues[$cues.Count-1].End, $audioDur) }
 
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("[Script Info]")
