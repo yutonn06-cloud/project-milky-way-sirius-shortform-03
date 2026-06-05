@@ -717,8 +717,10 @@ function Build-One($audioPath, $caption, $tag) {
     $pieces = @(Get-VideoPieces $videoDur)
     if ($NoNsfwScan) { Write-Warning "  [NSFW] gate DISABLED (-NoNsfwScan)" } else { Write-Host "  [NSFW] clean-window selection OK" }
 
-    $music  = Get-ChildItem -LiteralPath $MusicRoot -Filter *.mp3 -File -Recurse | Get-Random
-    if (-not $music) { throw "No .mp3 found under $MusicRoot" }
+    # pick BGM recursively, but SKIP _-prefixed folders (e.g. _inbox = un-ingested drops)
+    $music  = Get-ChildItem -LiteralPath $MusicRoot -Filter *.mp3 -File -Recurse |
+        Where-Object { $_.FullName -notmatch '\\_[^\\]*\\' } | Get-Random
+    if (-not $music) { throw "No .mp3 found under $MusicRoot (excluding _inbox)" }
 
     $useCinematic = switch ($Cinematic) { "on" { $true } "off" { $false } default { (Get-Random -Minimum 0 -Maximum 100) -lt 60 } }
     $grade = if ($useCinematic) { $script:CinematicLooks | Get-Random } else { $null }
