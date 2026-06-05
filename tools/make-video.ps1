@@ -4,11 +4,12 @@
 # finished vertical 720x1280 mp4. Fully local (ffmpeg + whisper.cpp); no CapCut.
 #
 # Pipeline: pick a 通常速度 base clip (rotated to avoid duplicate-video detection),
-# run it at 2x as the MAIN visual, splice in 1-2 short 高速 cut-aways for a
-# speed-change "immersion" beat, optionally apply a random cinematic colour
-# grade (variety + dedup), fit everything to the voice length, mix voice +
-# ducked music, and burn sentence-wrapped captions (whisper timing + exact
-# Notion text, white fill + black outline, just above centre).
+# play it at NORMAL 1x as the MAIN visual (occasionally a little faster for dedup),
+# splice 1-2 short 高速 cut-aways (placed in the LATTER half) for a speed-change
+# "immersion" beat, optionally apply a random cinematic colour grade, fit to the
+# voice length, mix voice + ducked music, and burn sentence-wrapped captions
+# (whisper timing + exact Notion text, white fill + black outline, just above centre).
+# NSFW: only footage that scans clean is used (detected nudity is excluded; fail-closed).
 #
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File tools/make-video.ps1            # latest entry, variant A
@@ -152,51 +153,137 @@ function Select-BaseClip($poolDir, $needSeconds) {
     return $pick
 }
 
-# --- plan the visual timeline: 通常速度 main (2x) + 高速 cut-away inserts (1x) ---
+# --- NSFW: scan a candidate window; only clean footage is ever used (fail-closed) ---
+function Get-UnsafeFrameCount($file, $start, $dur) {
+    if ($NoNsfwScan) { return 0 }
+    $py = Get-Command py -ErrorAction SilentlyContinue
+    $scanScript = Join-Path $PSScriptRoot "nsfw-scan.py"
+    if (-not $py -or -not (Test-Path $scanScript)) { throw "[NSFW] scanner unavailable (py / nsfw-scan.py). Pass -NoNsfwScan only if you accept the risk." }
+    $ErrorActionPreference = 'Continue'
+    $n = [math]::Min(14, [math]::Max(4, [int][math]::Ceiling($dur / 3.0)))
+    $frames = @()
+    for ($k = 0; $k -lt $n; $k++) {
+        $ts = $start + ($dur * ($k + 0.5) / $n)
+        $fp = Join-Path $tmp ("nsfw_" + [System.IO.Path]::GetRandomFileName().Split('.')[0] + ".jpg")
+        & $ffmpeg -hide_banner -loglevel error -y -ss $ts -i $file -frames:v 1 -q:v 4 $fp 2>$null | Out-Null
+        if (Test-Path $fp) { $frames += $fp }
+    }
+    if ($frames.Count -eq 0) { throw "[NSFW] could not extract frames for scan" }
+    $json = & py $scanScript --threshold $NsfwThreshold @frames 2>&1
+    $code = $LASTEXITCODE
+    Remove-Item $frames -Force -ErrorAction SilentlyContinue
+    if ($code -eq 0) { return 0 }
+    if ($code -eq 2) {
+        try { $r = ($json | Select-Object -Last 1) | ConvertFrom-Json } catch { $r = $null }
+        if ($r -and $r.hits) { return @($r.hits).Count } else { return 1 }
+    }
+    throw "[NSFW] scanner error: $json"
+}
+# find a clean window start in a clip: try the rotation hint, then spread starts; $null if none
+function Find-CleanStart($file, $needSrc, $clipDur, $hintStart) {
+    if ($NoNsfwScan) { return $hintStart }
+    $maxStart = [math]::Floor($clipDur - $needSrc)
+    if ($maxStart -lt 0) { return $null }
+    $cands = New-Object System.Collections.ArrayList
+    [void]$cands.Add([int][math]::Min($hintStart, $maxStart))
+    foreach ($f in @(0.0,0.15,0.3,0.45,0.6,0.75,0.9)) { [void]$cands.Add([int]($maxStart * $f)) }
+    foreach ($c in ($cands | Select-Object -Unique)) {
+        if ((Get-UnsafeFrameCount $file $c $needSrc) -eq 0) { return $c }
+    }
+    return $null
+}
+# rotation pick + clean-window guarantee across several clips; throws if none clean
+function Select-CleanBaseClip($poolDir, $needSrc) {
+    for ($t = 0; $t -lt 5; $t++) {
+        $pick = Select-BaseClip $poolDir $needSrc
+        $clipDur = Get-Duration $pick.File
+        $cs = Find-CleanStart $pick.File $needSrc $clipDur $pick.Start
+        if ($null -ne $cs) { return @{ File=$pick.File; Name=$pick.Name; Start=$cs } }
+        Write-Warning "  [NSFW] $($pick.Name): no clean $([int]$needSrc)s window -- trying another clip ($($t+1)/5)"
+    }
+    throw "[NSFW] no clean window in $poolDir after 5 clips -- aborting (review the pool)."
+}
+# clean short window from the 高速 pool for one insert
+function Select-CleanFast($fastClips, $dur) {
+    $tries = [math]::Max(4, [math]::Min(10, $fastClips.Count * 2))
+    for ($t = 0; $t -lt $tries; $t++) {
+        $fc = $fastClips | Get-Random
+        $fdur = Get-Duration $fc.FullName
+        $need = $dur + 0.5
+        if ($fdur -lt $need) { continue }
+        $hint = Get-Random -Minimum 0 -Maximum ([int]($fdur - $need) + 1)
+        $cs = Find-CleanStart $fc.FullName $need $fdur $hint
+        if ($null -ne $cs) { return @{ File=$fc.FullName; Name=$fc.Name; Start=$cs } }
+    }
+    throw "[NSFW] no clean 高速 insert window -- aborting (review the 高速 pool)."
+}
+
+# --- plan the visual timeline: 通常速度 main (1x, occasionally faster) + 高速 inserts (1x), inserts biased late ---
 function Get-VideoPieces($D) {
     $normalDir = Join-Path $MaterialsRoot "通常速度"
     $fastDir   = Join-Path $MaterialsRoot "高速"
 
+    if ($Pool -eq "高速") {
+        $need = [math]::Ceiling($D) + 1
+        $b = Select-CleanBaseClip $fastDir $need
+        return @(@{ File=$b.File; Name=$b.Name; Start=$b.Start; OutDur=$D; Speed=1.0; Kind='main' })
+    }
+
     $K = if ($SpeedInserts -ge 0) { $SpeedInserts } else { Get-Random -InputObject @(0,1,1,2) }
-    if ($Pool -eq "高速" -or -not (Test-Path $fastDir)) { $K = 0 }
-    $fastClips = if (Test-Path $fastDir) { Get-ChildItem -LiteralPath $fastDir -Filter *.mp4 -File } else { @() }
+    $fastClips = if (Test-Path $fastDir) { @(Get-ChildItem -LiteralPath $fastDir -Filter *.mp4 -File) } else { @() }
     if ($fastClips.Count -eq 0) { $K = 0 }
 
+    # 通常速度 is normally left at 1x; only occasionally sped up a little (dedup variety)
+    $mainSpeed = if ((Get-Random -Minimum 0 -Maximum 100) -lt 25) { Get-Random -InputObject @(1.25,1.5) } else { 1.0 }
+
+    $insertDurs = @()
+    if ($K -gt 0) { $insertDurs = @(1..$K | ForEach-Object { [math]::Round((Get-Random -Minimum 3.0 -Maximum 5.0), 2) }) }
+    $mainOut = [math]::Round($D - ($insertDurs | Measure-Object -Sum).Sum, 2)
+    if ($K -gt 0 -and $mainOut -lt ($K + 1) * 5) { $K = 0; $insertDurs = @(); $mainOut = $D }
+
+    $mainSrcNeed = [math]::Ceiling($mainOut * $mainSpeed) + 1
+    $main = Select-CleanBaseClip $normalDir $mainSrcNeed
+
     if ($K -le 0) {
-        $speed = if ($Pool -eq "高速") { 1.0 } else { 2.0 }
-        $need  = [math]::Ceiling($D * $speed) + 1
-        $base  = Select-BaseClip (Join-Path $MaterialsRoot $Pool) $need
-        return @(@{ File=$base.File; Name=$base.Name; Start=$base.Start; OutDur=$D; Speed=$speed; Kind='main' })
+        return @(@{ File=$main.File; Name=$main.Name; Start=$main.Start; OutDur=$mainOut; Speed=$mainSpeed; Kind='main' })
     }
 
-    $insertDurs = @(1..$K | ForEach-Object { [math]::Round((Get-Random -Minimum 3.0 -Maximum 5.0), 2) })
-    $normalTotal = [math]::Round($D - ($insertDurs | Measure-Object -Sum).Sum, 2)
-    if ($normalTotal -lt ($K + 1) * 4) {
-        # not enough room -> fall back to single main piece
-        $need = [math]::Ceiling($D * 2) + 1
-        $base = Select-BaseClip $normalDir $need
-        return @(@{ File=$base.File; Name=$base.Name; Start=$base.Start; OutDur=$D; Speed=2.0; Kind='main' })
+    # late-biased insert output positions in [0.5D, 0.85D]
+    $targets = @()
+    for ($i = 1; $i -le $K; $i++) {
+        $frac = 0.5 + 0.35 * (($i - 0.5) / $K)
+        $jit  = (Get-Random -Minimum -20 -Maximum 20) / 1000.0
+        $targets += [math]::Round($D * [math]::Min(0.9, [math]::Max(0.45, $frac + $jit)), 2)
     }
+    $targets = @($targets | Sort-Object)
 
-    # split normalTotal into K+1 roughly-equal parts
-    $each = [math]::Round($normalTotal / ($K + 1), 2)
-    $parts = @()
-    for ($i = 0; $i -lt $K; $i++) { $parts += $each }
-    $parts += [math]::Round($normalTotal - $each * $K, 2)
-
-    $need = [math]::Ceiling($normalTotal * 2) + 1
-    $main = Select-BaseClip $normalDir $need
+    # derive main-part output sizes so inserts land on the targets
+    $mainParts = @()
+    $prevCum = 0.0; $cumIns = 0.0
+    for ($i = 0; $i -lt $K; $i++) {
+        $cum  = $targets[$i] - $cumIns
+        $part = [math]::Round($cum - $prevCum, 2)
+        if ($part -lt 4) { $part = 4 }
+        $mainParts += $part
+        $prevCum += $part
+        $cumIns  += $insertDurs[$i]
+    }
+    $last = [math]::Round($mainOut - ($mainParts | Measure-Object -Sum).Sum, 2)
+    if ($last -lt 4) {
+        $each = [math]::Round($mainOut / ($K + 1), 2)
+        $mainParts = @(); for ($i = 0; $i -lt $K; $i++) { $mainParts += $each }
+        $last = [math]::Round($mainOut - $each * $K, 2)
+    }
+    $mainParts += $last
 
     $pieces = @()
     $cursor = [double]$main.Start
     for ($i = 0; $i -lt ($K + 1); $i++) {
-        $pieces += @{ File=$main.File; Name=$main.Name; Start=[math]::Round($cursor,2); OutDur=$parts[$i]; Speed=2.0; Kind='main' }
-        $cursor += $parts[$i] * 2
+        $pieces += @{ File=$main.File; Name=$main.Name; Start=[math]::Round($cursor,2); OutDur=$mainParts[$i]; Speed=$mainSpeed; Kind='main' }
+        $cursor += $mainParts[$i] * $mainSpeed
         if ($i -lt $K) {
-            $fc = $fastClips | Get-Random
-            $fdur = Get-Duration $fc.FullName
-            $fstart = if ($fdur -gt $insertDurs[$i] + 1) { Get-Random -Minimum 0 -Maximum ([int]($fdur - $insertDurs[$i] - 1)) } else { 0 }
-            $pieces += @{ File=$fc.FullName; Name=$fc.Name; Start=$fstart; OutDur=$insertDurs[$i]; Speed=1.0; Kind='insert' }
+            $f = Select-CleanFast $fastClips $insertDurs[$i]
+            $pieces += @{ File=$f.File; Name=$f.Name; Start=$f.Start; OutDur=$insertDurs[$i]; Speed=1.0; Kind='insert' }
         }
     }
     return $pieces
@@ -372,61 +459,14 @@ $script:CinematicLooks = @(
     "eq=contrast=1.05:saturation=1.25,colorbalance=rs=-0.04:bs=0.06,vignette=PI/5"
 )
 
-# --- NSFW gate: sample frames from each piece's source segment, scan with NudeNet ---
-# Fail-CLOSED: if the scanner can't run, the build aborts (unless -NoNsfwScan).
-function Test-PiecesSafe($pieces) {
-    if ($NoNsfwScan) { return @{ Safe=$true; Fatal=$false; Reason='scan disabled (-NoNsfwScan)' } }
-    $py = Get-Command py -ErrorAction SilentlyContinue
-    $scanScript = Join-Path $PSScriptRoot "nsfw-scan.py"
-    if (-not $py -or -not (Test-Path $scanScript)) {
-        return @{ Safe=$false; Fatal=$true; Reason='NSFW scanner unavailable (py / nsfw-scan.py). Pass -NoNsfwScan only if you accept the risk.' }
-    }
-    $ErrorActionPreference = 'Continue'
-    $frames = @()
-    for ($i = 0; $i -lt $pieces.Count; $i++) {
-        $p = $pieces[$i]
-        $srcDur = [math]::Max(1, $p.OutDur * $p.Speed)
-        $count = [math]::Min(12, [math]::Max(3, [int][math]::Ceiling($srcDur / 2.5)))
-        for ($k = 0; $k -lt $count; $k++) {
-            $ts = $p.Start + ($srcDur * ($k + 0.5) / $count)
-            $fp = Join-Path $tmp ("nsfw_{0}_{1}.jpg" -f $i, $k)
-            & $ffmpeg -hide_banner -loglevel error -y -ss $ts -i $p.File -frames:v 1 -q:v 4 $fp 2>$null | Out-Null
-            if (Test-Path $fp) { $frames += $fp }
-        }
-    }
-    if ($frames.Count -eq 0) { return @{ Safe=$false; Fatal=$true; Reason='no frames extracted for NSFW scan' } }
-    $json = & py $scanScript --threshold $NsfwThreshold @frames 2>&1
-    $code = $LASTEXITCODE
-    Remove-Item $frames -Force -ErrorAction SilentlyContinue
-    if ($code -eq 0) { return @{ Safe=$true; Fatal=$false; Reason='clean' } }
-    if ($code -eq 2) {
-        try { $r = ($json | Select-Object -Last 1) | ConvertFrom-Json } catch { $r = $null }
-        $hit = if ($r -and $r.hits) { (($r.hits | ForEach-Object { "$($_.class)@$($_.score)" }) | Select-Object -Unique) -join ", " } else { "nudity" }
-        return @{ Safe=$false; Fatal=$false; Reason="NUDITY DETECTED ($hit)" }
-    }
-    return @{ Safe=$false; Fatal=$true; Reason="NSFW scanner error: $json" }
-}
-
 # --- one variant -> one mp4 ---
 function Build-One($audioPath, $caption, $tag) {
     $videoDur = [math]::Round((Get-Duration $audioPath), 2)
     if ($videoDur -le 0) { throw "audio duration is zero: $audioPath" }
 
-    # plan clips, then run the NSFW gate; re-plan on detected nudity, abort if no safe selection
-    $pieces = $null
-    $maxTries = 8
-    for ($try = 1; $try -le $maxTries; $try++) {
-        $cand = @(Get-VideoPieces $videoDur)
-        $audit = Test-PiecesSafe $cand
-        if ($audit.Safe) {
-            $pieces = $cand
-            if (-not $NoNsfwScan) { Write-Host "  [NSFW] audit OK ($($audit.Reason))" } else { Write-Warning "  [NSFW] gate DISABLED (-NoNsfwScan)" }
-            break
-        }
-        if ($audit.Fatal) { throw "[NSFW] $($audit.Reason)" }
-        Write-Warning "  [NSFW] $($audit.Reason) -- discarding selection, re-planning ($try/$maxTries)"
-        if ($try -eq $maxTries) { throw "[NSFW] no safe clip selection after $maxTries tries -- aborting (no video produced). Review the 通常速度/高速 pools." }
-    }
+    # plan clips -- NSFW gate is built into selection (only clean windows are used; fail-closed)
+    $pieces = @(Get-VideoPieces $videoDur)
+    if ($NoNsfwScan) { Write-Warning "  [NSFW] gate DISABLED (-NoNsfwScan)" } else { Write-Host "  [NSFW] clean-window selection OK" }
 
     $music  = Get-ChildItem -LiteralPath $MusicRoot -Filter *.mp3 -File -Recurse | Get-Random
     if (-not $music) { throw "No .mp3 found under $MusicRoot" }
