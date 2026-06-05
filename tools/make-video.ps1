@@ -40,11 +40,11 @@ param(
     [double]$MusicVolume   = 0.18,
     [int]$SpeedInserts     = -1,             # -1 = auto (random 0-2); 0 = none; N = fixed
     [ValidateSet("auto","on","off")] [string]$Cinematic = "auto",
-    [double]$NsfwThreshold = 0.35,           # nudity-detection score threshold (lower = stricter)
+    [double]$NsfwThreshold = 0.25,           # nudity-detection score threshold (lower = stricter)
     [switch]$NoNsfwScan,                     # DANGER: disable the nudity gate (off by default = gate ON)
     [string]$WhisperDir    = "C:\Users\yuton\whisper-cpp\Release",
     [string]$WhisperModel  = "C:\Users\yuton\whisper-cpp\models\ggml-small.bin",
-    [string]$CaptionFont   = "Meiryo",
+    [string]$CaptionFont   = "BIZ UDPGothic",
     [int]$CaptionFontSize  = 74,
     [int]$CaptionMarginLR  = 48,             # side margins (720 wide) -> controls wrap width
     [int]$CaptionMarginV   = 540,            # distance above bottom -> ~just above centre
@@ -160,7 +160,7 @@ function Get-UnsafeFrameCount($file, $start, $dur) {
     $scanScript = Join-Path $PSScriptRoot "nsfw-scan.py"
     if (-not $py -or -not (Test-Path $scanScript)) { throw "[NSFW] scanner unavailable (py / nsfw-scan.py). Pass -NoNsfwScan only if you accept the risk." }
     $ErrorActionPreference = 'Continue'
-    $n = [math]::Min(14, [math]::Max(4, [int][math]::Ceiling($dur / 3.0)))
+    $n = [math]::Min(24, [math]::Max(6, [int][math]::Ceiling($dur / 2.0)))   # dense sampling (~every 2s) to catch brief/back nudity
     $frames = @()
     for ($k = 0; $k -lt $n; $k++) {
         $ts = $start + ($dur * ($k + 0.5) / $n)
@@ -426,12 +426,18 @@ function New-CaptionAss($audioPath, $scriptText, $assPath) {
         $prevIdx = $idx
         if ($segText.Trim().Length -eq 0) { continue }
         $s = [double]$wsegs[$i].Start; $e = [double]$wsegs[$i].End
-        $units = @(Split-IntoUnits $segText)
-        $segChars = [math]::Max(1, $segText.Length)
-        $cur = $s
-        for ($j = 0; $j -lt $units.Count; $j++) {
-            [void]$cues.Add(@{ Start=$cur; End=$e; Text=$units[$j] })
-            $cur = [math]::Round($cur + ($e - $s) * ($units[$j].Length / $segChars), 3)
+        if ($segText.Length -le $cap) {
+            # one caption per voice segment -> stable (no flashing), still voice-aligned
+            [void]$cues.Add(@{ Start=$s; End=$e; Text=$segText })
+        } else {
+            # long segment: split at 。、 and give each piece a proportional slice of the segment time
+            $units = @(Split-IntoUnits $segText)
+            $segChars = [math]::Max(1, $segText.Length)
+            $cur = $s
+            for ($j = 0; $j -lt $units.Count; $j++) {
+                [void]$cues.Add(@{ Start=$cur; End=$e; Text=$units[$j] })
+                $cur = [math]::Round($cur + ($e - $s) * ($units[$j].Length / $segChars), 3)
+            }
         }
     }
     if ($prevIdx -lt $knownLen -and $cues.Count -gt 0) {
@@ -439,10 +445,24 @@ function New-CaptionAss($audioPath, $scriptText, $assPath) {
     } elseif ($cues.Count -eq 0) {
         [void]$cues.Add(@{ Start=0.0; End=$audioDur; Text=$clean })
     }
-    # hold each caption until the next one starts (no flicker in pauses); clamp last to audio end
+    # hold each caption until the next one starts (no flicker in pauses)
     for ($i = 0; $i -lt $cues.Count; $i++) {
         if ($i -lt $cues.Count - 1) { $cues[$i].End = $cues[$i+1].Start }
         if ($cues[$i].End -le $cues[$i].Start) { $cues[$i].End = $cues[$i].Start + 0.5 }
+    }
+    # merge too-short / too-brief captions into a neighbor (kills 「もう」-alone flashing); keep <= cap
+    $minChars = 6; $minDur = 1.1
+    $j = 0
+    while ($cues.Count -gt 1 -and $j -lt $cues.Count) {
+        $isShort = ($cues[$j].Text.Length -lt $minChars) -or (($cues[$j].End - $cues[$j].Start) -lt $minDur)
+        if (-not $isShort) { $j++; continue }
+        $toNext = if ($j -lt $cues.Count-1) { $cues[$j].Text.Length + $cues[$j+1].Text.Length } else { 99999 }
+        $toPrev = if ($j -gt 0) { $cues[$j-1].Text.Length + $cues[$j].Text.Length } else { 99999 }
+        if ($toNext -le $cap -and $toNext -le $toPrev) {
+            $cues[$j+1].Text = $cues[$j].Text + $cues[$j+1].Text; $cues[$j+1].Start = $cues[$j].Start; $cues.RemoveAt($j); $j = 0
+        } elseif ($toPrev -le $cap) {
+            $cues[$j-1].Text = $cues[$j-1].Text + $cues[$j].Text; $cues[$j-1].End = $cues[$j].End; $cues.RemoveAt($j); $j = 0
+        } else { $j++ }
     }
     if ($audioDur -gt 0) { $cues[$cues.Count-1].End = [math]::Max($cues[$cues.Count-1].End, $audioDur) }
 
@@ -479,7 +499,50 @@ $script:CinematicLooks = @(
     "eq=contrast=1.05:saturation=1.25,colorbalance=rs=-0.04:bs=0.06,vignette=PI/5"
 )
 
-# --- one variant -> one mp4 ---
+# assemble one mp4 from the planned pieces (+ optional captions). Reused for the
+# caption and no-caption versions so they are identical except for the subtitles.
+function Invoke-Assemble($pieces, $music, $grade, $audioPath, $assPath, $videoDur, $outFile) {
+    $inputs = @(); $nodes = @(); $vlabels = @()
+    for ($i = 0; $i -lt $pieces.Count; $i++) {
+        $p = $pieces[$i]
+        $srcDur = [math]::Round($p.OutDur * $p.Speed, 2) + 0.2
+        $inputs += @("-ss", $p.Start, "-t", $srcDur, "-i", $p.File)
+        $sp = "setpts=$([math]::Round(1.0/$p.Speed,4))*PTS"
+        $nodes += "[$($i):v]$sp,scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=24,trim=duration=$($p.OutDur),setpts=PTS-STARTPTS[v$i]"
+        $vlabels += "[v$i]"
+    }
+    $nodes += "$($vlabels -join '')concat=n=$($pieces.Count):v=1:a=0[vc]"
+    $cur = "[vc]"
+    if ($grade) { $nodes += "$cur$grade[vg]"; $cur = "[vg]" }
+    if ($assPath) {
+        $assEsc = ($assPath -replace '\\','/') -replace ':','\:'
+        $nodes += "$cur" + "subtitles='$assEsc'[v]"; $cur = "[v]"
+    }
+    if ($cur -ne "[v]") { $nodes += "$cur" + "null[v]" }
+    $vi = $pieces.Count; $mi = $pieces.Count + 1
+    $inputs += @("-i", $audioPath)
+    $inputs += @("-stream_loop", "-1", "-i", $music.FullName)
+    $nodes += "[$($vi):a]volume=1.0,aformat=channel_layouts=stereo[vo]"
+    $nodes += "[$($mi):a]volume=$MusicVolume,aformat=channel_layouts=stereo[mus]"
+    $nodes += "[vo][mus]amix=inputs=2:duration=first:dropout_transition=0,dynaudnorm[a]"
+    $filter = $nodes -join ";"
+    $ffArgs = @("-y") + $inputs + @(
+        "-filter_complex", $filter,
+        "-map", "[v]", "-map", "[a]",
+        "-t", $videoDur,
+        "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k",
+        "-movflags", "+faststart",
+        $outFile
+    )
+    Write-Host "  ffmpeg -> $outFile"
+    $ErrorActionPreference = 'Continue'
+    & $ffmpeg -hide_banner -loglevel error @ffArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
+    if ($LASTEXITCODE -ne 0) { throw "ffmpeg failed (exit $LASTEXITCODE)" }
+    Write-Host "  DONE: $outFile  ($([math]::Round((Get-Item $outFile).Length/1MB,1)) MB)"
+}
+
+# --- one variant -> caption + no-caption mp4s ---
 function Build-One($audioPath, $caption, $tag) {
     $videoDur = [math]::Round((Get-Duration $audioPath), 2)
     if ($videoDur -le 0) { throw "audio duration is zero: $audioPath" }
@@ -515,53 +578,18 @@ function Build-One($audioPath, $caption, $tag) {
         if ($assPath) { Write-Host "  captions: $assPath" }
     }
 
-    # build inputs + filtergraph
-    $inputs = @()
-    $nodes  = @()
-    $vlabels = @()
-    for ($i = 0; $i -lt $pieces.Count; $i++) {
-        $p = $pieces[$i]
-        $srcDur = [math]::Round($p.OutDur * $p.Speed, 2) + 0.2
-        $inputs += @("-ss", $p.Start, "-t", $srcDur, "-i", $p.File)
-        $sp = "setpts=$([math]::Round(1.0/$p.Speed,4))*PTS"
-        $nodes += "[$($i):v]$sp,scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=24,trim=duration=$($p.OutDur),setpts=PTS-STARTPTS[v$i]"
-        $vlabels += "[v$i]"
-    }
-    $nodes += "$($vlabels -join '')concat=n=$($pieces.Count):v=1:a=0[vc]"
-    $cur = "[vc]"
-    if ($grade) { $nodes += "$cur$grade[vg]"; $cur = "[vg]" }
-    if ($assPath) {
-        $assEsc = ($assPath -replace '\\','/') -replace ':','\:'
-        $nodes += "$cur" + "subtitles='$assEsc'[v]"; $cur = "[v]"
-    }
-    if ($cur -ne "[v]") { $nodes += "$cur" + "null[v]" }
-
-    $vi = $pieces.Count; $mi = $pieces.Count + 1
-    $inputs += @("-i", $audioPath)
-    $inputs += @("-stream_loop", "-1", "-i", $music.FullName)
-    $nodes += "[$($vi):a]volume=1.0,aformat=channel_layouts=stereo[vo]"
-    $nodes += "[$($mi):a]volume=$MusicVolume,aformat=channel_layouts=stereo[mus]"
-    $nodes += "[vo][mus]amix=inputs=2:duration=first:dropout_transition=0,dynaudnorm[a]"
-    $filter = $nodes -join ";"
-
+    # produce BOTH versions from the SAME footage/music/grade: captioned + no-caption
     $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
-    $outFile = Join-Path $OutDir "auto_${tag}_${stamp}.mp4"
-    $ffArgs = @("-y") + $inputs + @(
-        "-filter_complex", $filter,
-        "-map", "[v]", "-map", "[a]",
-        "-t", $videoDur,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart",
-        $outFile
-    )
-    Write-Host "  ffmpeg assembling -> $outFile"
-    $ErrorActionPreference = 'Continue'
-    & $ffmpeg -hide_banner -loglevel error @ffArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
-    if ($LASTEXITCODE -ne 0) { throw "ffmpeg failed (exit $LASTEXITCODE)" }
-
-    Write-Host "  DONE: $outFile  ($([math]::Round((Get-Item $outFile).Length/1MB,1)) MB)"
-    return $outFile
+    $results = @()
+    if ($assPath) {
+        $capFile = Join-Path $OutDir "auto_${tag}_${stamp}.mp4"
+        Invoke-Assemble $pieces $music $grade $audioPath $assPath $videoDur $capFile
+        $results += $capFile
+    }
+    $plainFile = Join-Path $OutDir "auto_${tag}_${stamp}_字幕なし.mp4"
+    Invoke-Assemble $pieces $music $grade $audioPath $null $videoDur $plainFile
+    $results += $plainFile
+    return $results
 }
 
 # --- resolve inputs (Notion or explicit) ---
