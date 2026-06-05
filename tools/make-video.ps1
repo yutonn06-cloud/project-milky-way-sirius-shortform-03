@@ -1,28 +1,40 @@
 ﻿# make-video.ps1 -- Local short-video assembler.
 #
 # Turns one Notion "ショート動画" entry (script + ElevenLabs audio) into a
-# finished vertical 720x1280 mp4. Fully local (ffmpeg + whisper.cpp); no CapCut.
+# finished VIDEO-ONLY vertical 720x1280 mp4 (字幕なし). Captions are added later in
+# Filmora (字幕検出で仕上げ) -- so by default this tool burns NO captions.
 #
 # Pipeline: pick a 通常速度 base clip (rotated to avoid duplicate-video detection),
 # play it at NORMAL 1x as the MAIN visual (occasionally a little faster for dedup),
 # splice 1-2 short 高速 cut-aways (placed in the LATTER half) for a speed-change
 # "immersion" beat, optionally apply a random cinematic colour grade, fit to the
-# voice length, mix voice + ducked music, and burn sentence-wrapped captions
-# (whisper timing + exact Notion text, white fill + black outline, just above centre).
+# voice length, and mix voice + ducked music.
 # NSFW: only footage that scans clean is used (detected nudity is excluded; fail-closed).
 #
+# Output (default): one VIDEO-ONLY mp4 per variant in OutDir\字幕なし\ -- import that
+# into Filmora and add captions there. Outputs are TYPE-SPLIT into subfolders so
+# they are easy to find by hand:
+#   OutDir\字幕なし\  *_字幕なし.mp4   <- Filmora import (always produced)
+#   OutDir\字幕あり\  *.mp4           <- burned-caption mp4 (only with -BurnCaption)
+#   OutDir\srt\       *.srt           <- voice-synced exact-text SRT (only with -Srt)
+#
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File tools/make-video.ps1            # latest entry, variant A
+#   powershell -ExecutionPolicy Bypass -File tools/make-video.ps1            # latest entry, variant A (video-only)
 #   ... -File tools/make-video.ps1 -Variant both
 #   ... -File tools/make-video.ps1 -PageId <id> -SpeedInserts 2 -Cinematic on
-#   ... -File tools/make-video.ps1 -AudioFile C:\v.mp3 -ScriptText "..." -NoCaption
+#   ... -File tools/make-video.ps1 -AudioFile C:\v.mp3 -ScriptText "..."     # video-only from explicit inputs
+#   ... -File tools/make-video.ps1 -BurnCaption -Srt   # also burn captions + write SRT (needs whisper)
 #
 # .env (repo root): NOTION_TOKEN [, NOTION_DATABASE_ID]
 # Requires ffmpeg/ffprobe on PATH (or set $env:FFMPEG_DIR).
-# Captions need whisper.cpp at $WhisperDir + a ggml model at $WhisperModel.
+# Captions/SRT (opt-in) need whisper.cpp at $WhisperDir + a ggml model at $WhisperModel.
 # NSFW gate (ON by default, FAIL-CLOSED): needs `py` + tools/nsfw-scan.py
 #   (pip install nudenet onnxruntime opencv-python-headless). Scans every
 #   clip segment; nudity -> re-plan; can't scan -> abort. -NoNsfwScan bypasses.
+# CapCut inject (OPT-IN -CapCutDraft, needs -Srt): pushes video + SRT into ONE reused
+#   CapCut draft (-CapCutName, default SIRIUS_SHORT_CNT) via tools/build-capcut-draft.py
+#   (needs `py` + `pip install pycapcut`). NOTE: the live flow finishes in Filmora,
+#   not CapCut -- this stays available but is off by default.
 #
 # NOTE: save this file UTF-8 *with BOM* (Windows PowerShell 5.1 reads .ps1 as
 # ANSI otherwise and mangles the Japanese folder/property literals).
@@ -49,7 +61,12 @@ param(
     [int]$CaptionMarginLR  = 48,             # side margins (720 wide) -> controls wrap width
     [int]$CaptionMarginV   = 540,            # distance above bottom -> ~just above centre
     [int]$CaptionMaxLines  = 3,              # cap lines per caption (2-3)
-    [switch]$NoCaption,
+    # Default flow = VIDEO-ONLY (字幕なし). Captions are finished in Filmora (字幕検出),
+    # so burning / SRT / CapCut are all OPT-IN now (User 決定 2026-06-05).
+    [switch]$BurnCaption,                    # ALSO output a burned-caption mp4 (needs whisper)
+    [switch]$Srt,                            # ALSO output a voice-synced .srt (needs whisper)
+    [switch]$CapCutDraft,                    # ALSO inject video+SRT into a reused CapCut draft (needs -Srt)
+    [string]$CapCutName    = "SIRIUS_SHORT_CNT",  # the ONE reused Sirius CapCut project (swap each run)
     [switch]$KeepIntermediate
 )
 
@@ -58,6 +75,13 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $tmp = Join-Path $repoRoot ".tmp"
 if (-not (Test-Path $tmp)) { New-Item -ItemType Directory -Path $tmp | Out-Null }
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
+
+# type-split output folders (探しやすさ優先・手で Filmora に入れる前提)。各タイプは
+# 自分のサブフォルダへ → 「字幕なし」を開けば Filmora 取込用が新しい順に並ぶ。
+$DirPlain = Join-Path $OutDir "字幕なし"   # video-only (Filmora import) -- 主成果物
+$DirCap   = Join-Path $OutDir "字幕あり"   # burned-caption mp4 (-BurnCaption 時のみ)
+$DirSrt   = Join-Path $OutDir "srt"         # voice-synced SRT (-Srt 時のみ)
+function Initialize-Dir($d) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }; return $d }
 
 # --- resolve ffmpeg/ffprobe ---
 function Resolve-Tool($name) {
@@ -305,6 +329,15 @@ function Format-AssTime($sec) {
     if ($cs -ge 100) { $cs = 99 }
     return ("{0}:{1:D2}:{2:D2}.{3:D2}" -f $h,$m,$s,$cs)
 }
+function Format-SrtTime($sec) {
+    if ($sec -lt 0) { $sec = 0 }
+    $h  = [int][math]::Floor($sec/3600)
+    $m  = [int][math]::Floor(($sec%3600)/60)
+    $s  = [int][math]::Floor($sec%60)
+    $ms = [int][math]::Round(($sec - [math]::Floor($sec))*1000)
+    if ($ms -ge 1000) { $ms = 999 }
+    return ("{0:D2}:{1:D2}:{2:D2},{3:D3}" -f $h,$m,$s,$ms)
+}
 # libass won't auto-wrap spaceless Japanese. Wrap into lines breaking ONLY at
 # natural boundaries: punctuation (、。！？) first, else after a particle
 # (は/が/を/に/で/と/…), so words like 統計 are never split. Hard-break only as
@@ -341,7 +374,7 @@ function Format-CaptionWrap($text, $maxChars, $maxLines) {
     return ($lines -join '\N')
 }
 
-function New-CaptionAss($audioPath, $scriptText, $assPath) {
+function New-CaptionAss($audioPath, $scriptText, $assPath, $srtPath) {
     $wcli = Join-Path $WhisperDir "whisper-cli.exe"
     if (-not (Test-Path $wcli) -or -not (Test-Path $WhisperModel)) {
         Write-Warning "  whisper not found ($wcli / $WhisperModel) -- skipping captions."
@@ -466,6 +499,24 @@ function New-CaptionAss($audioPath, $scriptText, $assPath) {
     }
     if ($audioDur -gt 0) { $cues[$cues.Count-1].End = [math]::Max($cues[$cues.Count-1].End, $audioDur) }
 
+    # SRT deliverable for CapCut: same voice-synced cues + exact text, but NO forced
+    # line breaks (CapCut re-wraps to its own caption box / font).
+    if ($srtPath) {
+        $srtSb = New-Object System.Text.StringBuilder
+        $n = 1
+        foreach ($c in $cues) {
+            $t = ($c.Text -replace '\r?\n','').Trim()
+            if (-not $t) { continue }
+            [void]$srtSb.AppendLine([string]$n)
+            [void]$srtSb.AppendLine("$(Format-SrtTime $c.Start) --> $(Format-SrtTime $c.End)")
+            [void]$srtSb.AppendLine($t)
+            [void]$srtSb.AppendLine("")
+            $n++
+        }
+        # SRT as UTF-8 WITHOUT BOM (whisper/player convention; CapCut reads it fine)
+        [System.IO.File]::WriteAllText($srtPath, $srtSb.ToString(), (New-Object System.Text.UTF8Encoding $false))
+    }
+
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("[Script Info]")
     [void]$sb.AppendLine("ScriptType: v4.00+")
@@ -570,26 +621,49 @@ function Build-One($audioPath, $caption, $tag) {
     Write-Host "  cinematic: $(if ($grade) { $grade } else { 'none' })"
     Write-Host "  voice: $([System.IO.Path]::GetFileName($audioPath))  dur=$($videoDur)s"
 
-    # captions
+    # captions/SRT are OPT-IN (Filmora flow = video-only). whisper runs ONLY if
+    # -BurnCaption or -Srt is given; both reuse the same voice-synced cues.
+    $stamp   = Get-Date -Format "yyyyMMdd_HHmmss"
+    $base    = "auto_${tag}_${stamp}"
     $assPath = $null
-    if (-not $NoCaption -and $caption) {
-        $safeTag = ($tag -replace '[^A-Za-z0-9_]','_')
-        $assPath = New-CaptionAss $audioPath $caption (Join-Path $tmp "cap_$safeTag.ass")
-        if ($assPath) { Write-Host "  captions: $assPath" }
+    $srtFile = $null
+    if ($caption -and ($BurnCaption -or $Srt)) {
+        $safeTag   = ($tag -replace '[^A-Za-z0-9_]','_')
+        $srtTarget = if ($Srt) { Join-Path (Initialize-Dir $DirSrt) "$base.srt" } else { $null }
+        $builtAss  = New-CaptionAss $audioPath $caption (Join-Path $tmp "cap_$safeTag.ass") $srtTarget
+        if ($builtAss) {
+            if ($srtTarget -and (Test-Path $srtTarget)) { $srtFile = $srtTarget; Write-Host "  SRT: $srtFile" }
+            if ($BurnCaption) { $assPath = $builtAss; Write-Host "  captions: $assPath" }
+        }
     }
 
-    # produce BOTH versions from the SAME footage/music/grade: captioned + no-caption
-    $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    # produce the mp4(s) from the SAME footage/music/grade. The video-only (字幕なし)
+    # is the primary Filmora-import material and is ALWAYS produced.
     $results = @()
+    $plainFile = Join-Path (Initialize-Dir $DirPlain) "${base}_字幕なし.mp4"
+    Invoke-Assemble $pieces $music $grade $audioPath $null $videoDur $plainFile
+    $results += $plainFile
     if ($assPath) {
-        $capFile = Join-Path $OutDir "auto_${tag}_${stamp}.mp4"
+        $capFile = Join-Path (Initialize-Dir $DirCap) "$base.mp4"
         Invoke-Assemble $pieces $music $grade $audioPath $assPath $videoDur $capFile
         $results += $capFile
     }
-    $plainFile = Join-Path $OutDir "auto_${tag}_${stamp}_字幕なし.mp4"
-    Invoke-Assemble $pieces $music $grade $audioPath $null $videoDur $plainFile
-    $results += $plainFile
-    return $results
+    if ($srtFile) { $results += $srtFile }
+    return [pscustomobject]@{ Files = $results; Plain = $plainFile; Srt = $srtFile }
+}
+
+# --- push a finished (no-caption mp4 + SRT) pair into the reused CapCut draft ---
+function Invoke-CapCutDraft($plain, $srt, $name) {
+    $py = Get-Command py -ErrorAction SilentlyContinue
+    $tool = Join-Path $PSScriptRoot "build-capcut-draft.py"
+    if (-not $py -or -not (Test-Path $tool)) {
+        Write-Warning "  CapCut draft skipped (py / build-capcut-draft.py unavailable). Pass -NoCapCutDraft to silence."
+        return
+    }
+    Write-Host "  CapCut draft -> $name"
+    $ErrorActionPreference = 'Continue'
+    & py $tool --video $plain --srt $srt --name $name 2>&1 | ForEach-Object { Write-Host "    $_" }
+    if ($LASTEXITCODE -ne 0) { Write-Warning "  CapCut draft build failed (exit $LASTEXITCODE)." }
 }
 
 # --- resolve inputs (Notion or explicit) ---
@@ -615,11 +689,27 @@ if ($AudioFile) {
     }
 }
 
-$results = @()
+$built = @()
 foreach ($j in $jobs) {
     Write-Host "--- building $($j.Tag) ---"
-    $results += Build-One $j.Audio $j.Caption $j.Tag
+    $built += Build-One $j.Audio $j.Caption $j.Tag
 }
+
+# optional: inject into the ONE reused CapCut project (needs -Srt). With multiple
+# variants we can't put both in a single project, so we skip and let the operator pick.
+if ($CapCutDraft) {
+    $pairs = @($built | Where-Object { $_.Srt -and (Test-Path $_.Srt) })
+    if ($pairs.Count -eq 1) {
+        Invoke-CapCutDraft $pairs[0].Plain $pairs[0].Srt $CapCutName
+    } elseif ($pairs.Count -gt 1) {
+        Write-Host "CapCut: $($pairs.Count) variants built -- one reused project ($CapCutName), so auto-inject was skipped."
+        Write-Host "  採用する方を注入: py tools/build-capcut-draft.py --video <_字幕なし.mp4> --srt <.srt> --name $CapCutName"
+    } else {
+        Write-Warning "CapCut: -CapCutDraft was set but no SRT was produced -- add -Srt."
+    }
+}
+
+$results = $built | ForEach-Object { $_.Files }
 Write-Host "==="
 Write-Host "Produced $($results.Count) file(s):"
 $results | ForEach-Object { Write-Host "  $_" }
