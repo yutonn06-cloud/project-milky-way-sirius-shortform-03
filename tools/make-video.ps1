@@ -152,13 +152,14 @@ function Get-NotionDbId { if ($env:NOTION_DATABASE_ID) { $env:NOTION_DATABASE_ID
 
 # generic query with caller-supplied extra-filters (UTF-8 safe POST). $dest filters
 # 投稿先; pass $null to match any 投稿先 (used by archive, which spans ショート動画 + X).
-function Invoke-NotionFilter($extraFilters, $pageSize = 20, $dest = "ショート動画") {
+function Invoke-NotionFilter($extraFilters, $pageSize = 20, $dest = "ショート動画", $ascending = $false) {
     $and = @()
     if ($dest) { $and += @{ property = "投稿先"; select = @{ equals = $dest } } }
     $and += $extraFilters
+    $dir = if ($ascending) { "ascending" } else { "descending" }
     $bodyObj = @{
         filter    = @{ and = $and }
-        sorts     = @(@{ timestamp = "created_time"; direction = "descending" })
+        sorts     = @(@{ timestamp = "created_time"; direction = $dir })
         page_size = $pageSize
     }
     $bytes = [System.Text.Encoding]::UTF8.GetBytes(($bodyObj | ConvertTo-Json -Depth 8))
@@ -168,11 +169,20 @@ function Invoke-NotionFilter($extraFilters, $pageSize = 20, $dest = "ショー�
 }
 
 # entries eligible for video generation: audio ready AND not yet posted (≠使用済み)
+# (legacy A/B-audio flow -- superseded by Get-DraftShortEntries pool flow)
 function Get-AutoEntries {
     Invoke-NotionFilter @(
         @{ property = "音声URL_A"; url = @{ is_not_empty = $true } },
         @{ property = "ステータス"; select = @{ does_not_equal = "使用済み" } }
     )
+}
+# NEW pool flow: 下書き = rewrites the cloud routine staged but not yet turned into a
+# video. FIFO (oldest first) so drafts don't starve. Audio is TTS'd locally at video
+# time, so no 音声URL needed. Promoted to 動画化済 (+ファイル名) once the video exists.
+function Get-DraftShortEntries {
+    Invoke-NotionFilter @(
+        @{ property = "ステータス"; select = @{ equals = "下書き" } }
+    ) 20 "ショート動画" $true
 }
 # entries the operator has marked posted -> their buffer videos get archived (any
 # 投稿先 -- only files that actually match a pattern are moved, so non-video dests are no-ops)
@@ -194,6 +204,21 @@ function Set-NotionStatus($pageId, $name) {
         Invoke-RestMethod -Uri "https://api.notion.com/v1/pages/$clean" -Method Patch `
             -Headers (Get-NotionHeaders) -Body $bytes -ContentType "application/json; charset=utf-8" | Out-Null
     } catch { Write-Warning "  Notion status write failed ($name): $_" }
+}
+
+# promote a 下書き pool record to the finished-video catalog: set ステータス=動画化済
+# AND stamp ファイル名 (the catalog entry's only locator -- no link, per design). One PATCH.
+function Set-NotionPromoted($pageId, $fileName) {
+    $clean = $pageId -replace '-', ''
+    $props = @{
+        "ステータス" = @{ select = @{ name = "動画化済" } }
+        "ファイル名" = @{ rich_text = @(@{ text = @{ content = "$fileName" } }) }
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes((@{ properties = $props } | ConvertTo-Json -Depth 8))
+    try {
+        Invoke-RestMethod -Uri "https://api.notion.com/v1/pages/$clean" -Method Patch `
+            -Headers (Get-NotionHeaders) -Body $bytes -ContentType "application/json; charset=utf-8" | Out-Null
+    } catch { Write-Warning "  Notion promote write failed: $_" }
 }
 
 # buffered cut count for a topic (原文番号) -- files are auto_<num>_*; the trailing
@@ -220,9 +245,15 @@ function Invoke-ArchivePosted {
         if ($files.Count -eq 0) { continue }
         $dest = Initialize-Dir $DirArchive
         foreach ($f in $files) {
-            Move-Item -LiteralPath $f.FullName -Destination (Join-Path $dest $f.Name) -Force
-            Write-Host "  archived: $($f.Name)"
-            $moved++
+            # archive is housekeeping -- a transient OneDrive/AV lock must NOT abort the
+            # whole video run; retry, then skip and let the next run pick it up.
+            try {
+                Invoke-WithRetry { Move-Item -LiteralPath $f.FullName -Destination (Join-Path $dest $f.Name) -Force }
+                Write-Host "  archived: $($f.Name)"
+                $moved++
+            } catch {
+                Write-Warning "  archive skipped (locked, retry next run): $($f.Name)"
+            }
         }
     }
     return $moved
@@ -872,42 +903,40 @@ function Invoke-AutoX {
 # one X-format video. Re-running (2x/day) keeps topping the buffer up to $MaxPerTopic.
 if ($Auto) {
     Import-DotEnv
-    Write-Host "=== AUTO buffer mode (Count=$Count, MaxPerTopic=$MaxPerTopic) ==="
+    Write-Host "=== AUTO buffer mode (pool→TTS→video→catalog; Count=$Count) ==="
     $archived = Invoke-ArchivePosted
     if ($archived) { Write-Host "Archived $archived file(s) of 使用済み topics." }
 
-    $page = Select-AutoEntry
-    if (-not $page) {
-        Write-Host "Auto: no ショート動画 topic to generate (queue empty, or newest topic's buffer is full)."
+    # pool flow: take up to $Count 下書き rewrites (FIFO), and for EACH make exactly one
+    # video (1案=1動画=1レコード). TTS locally, render, then promote that record to
+    # 動画化済 + stamp ファイル名. Drafts with no video stay 下書き (hidden from catalog view).
+    $drafts = @(Get-DraftShortEntries)
+    if ($drafts.Count -eq 0) {
+        Write-Host "Auto: no 下書き pool entry to make (pool empty)."
     } else {
-        $num   = Get-RichText $page.properties.'原文番号'
-        $textA = Get-RichText $page.properties.'リライト本文'
-        $textB = Get-RichText $page.properties.'リライト本文B'
-        $urlA  = $page.properties.'音声URL_A'.url
-        $urlB  = $page.properties.'音声URL_B'.url
-        Write-Host "Auto topic: $num ($($page.id))  buffered so far=$(Get-TopicCount $num)"
-
-        $audioA = if ($urlA) { Get-Audio $urlA "voice_A.mp3" } else { $null }
-        $audioB = if ($urlB) { Get-Audio $urlB "voice_B.mp3" } else { $null }
-        if (-not $audioA) { throw "Auto: topic $num has no 音声URL_A." }
-
-        # cut plan: cycle A,B,A,... falling back to A when B is unavailable
-        $results = @()
-        for ($i = 1; $i -le $Count; $i++) {
-            $v = if (($i % 2 -eq 0) -and $audioB) { "B" } else { "A" }
-            $audio = if ($v -eq "B") { $audioB } else { $audioA }
-            $text  = if ($v -eq "B") { $textB } else { $textA }
-            $tag   = "${num}_${v}_c${i}"
-            Write-Host "--- building $tag ($i/$Count) ---"
-            try { $results += (Build-One $audio $text $tag).Plain }
-            catch { Write-Warning "  cut $tag failed: $_" }
+        $made = 0
+        foreach ($page in $drafts) {
+            if ($made -ge $Count) { break }
+            $num  = Get-RichText $page.properties.'原文番号'
+            $text = (Get-RichText $page.properties.'リライト本文').Trim()
+            if (-not $text) { Write-Warning "  draft $($page.id) has empty リライト本文 -- skip"; continue }
+            Write-Host "=== pool draft: $num ($($page.id)) ==="
+            try { $audio = New-TtsAudio $text "voice_$num.mp3" }   # PAID local TTS
+            catch { Write-Warning "  TTS failed for ${num}: $_"; continue }
+            $built = $null
+            try { $built = Build-One $audio $text "$num" }
+            catch { Write-Warning "  build failed for ${num}: $_"; continue }
+            if ($built -and $built.Plain) {
+                $fname = [System.IO.Path]::GetFileName($built.Plain)
+                Set-NotionPromoted $page.id $fname
+                Write-Host "  -> $fname  (catalog: 動画化済 + ファイル名)"
+                $made++
+            }
         }
-        if ($results.Count -gt 0) { Set-NotionStatus $page.id "動画化済" }
-        Write-Host "Auto produced $($results.Count) cut(s) for $num (buffer total=$(Get-TopicCount $num)):"
-        $results | ForEach-Object { Write-Host "  $_" }
+        Write-Host "Auto produced $made video(s) from pool ($($drafts.Count) draft(s) available)."
     }
 
-    Invoke-AutoX   # occasional X-format variety (火・金)
+    Invoke-AutoX   # occasional X-format variety (火・金) -- paused via -NoX
     Write-Host "==="
     return
 }

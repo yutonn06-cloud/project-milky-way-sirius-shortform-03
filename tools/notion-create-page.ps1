@@ -59,6 +59,7 @@ $schema = [ordered]@{
     "ターゲット"    = "rich_text"
     "文体"       = "rich_text"
     "原文番号"     = "rich_text"
+    "ファイル名"    = "rich_text"
     "文字数"      = "number"
     "文字数B"     = "rich_text"
     "採用"       = "select"
