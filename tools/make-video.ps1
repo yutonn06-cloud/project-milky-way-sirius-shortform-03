@@ -102,6 +102,7 @@ $DirPlain   = Join-Path $OutDir "字幕なし"   # video-only buffer (Filmora im
 $DirCap     = Join-Path $OutDir "字幕あり"   # burned-caption mp4 (-BurnCaption 時のみ)
 $DirSrt     = Join-Path $OutDir "srt"         # voice-synced SRT (-Srt 時のみ)
 $DirArchive = Join-Path $OutDir "投稿済"     # archive of posted topics (auto-moved when Notion=使用済み)
+$DirReject  = Join-Path $OutDir "不採用"     # rejected topics (auto-moved when Notion=不採用)
 function Initialize-Dir($d) { if (-not (Test-Path $d)) { New-Item -ItemType Directory -Path $d | Out-Null }; return $d }
 
 # --- resolve ffmpeg/ffprobe ---
@@ -241,15 +242,16 @@ function Get-TopicCount($num) {
         Where-Object { $_.Name -like "auto_${num}_*" }).Count
 }
 
-# move every buffered file of each 使用済み topic into 投稿済\ (re-post prevention + tidy)
-function Invoke-ArchivePosted {
-    $posted = @(Get-PostedEntries)
-    if ($posted.Count -eq 0) { return 0 }
+# move every buffered file of each topic with $statusName into $destDir (re-post prevention + tidy).
+# Used for 使用済み -> 投稿済\ and 不採用 -> 不採用\.
+function Move-FootageForStatus($statusName, $destDir) {
+    $entries = @(Invoke-NotionFilter @( @{ property = "ステータス"; select = @{ equals = $statusName } } ) 100 $null)
+    if ($entries.Count -eq 0) { return 0 }
     $moved = 0
-    foreach ($p in $posted) {
-        # PRECISE link: archive ONLY this record's own render, derived from the exact ファイル名
+    foreach ($p in $entries) {
+        # PRECISE link: move ONLY this record's own render, derived from the exact ファイル名
         # stamped at promote time. The render stem (auto_<num>_<stamp>) is unique per video, so a
-        # 使用済み record never sweeps up a *different* record that happens to share the 原文番号
+        # record never sweeps up a *different* record that happens to share the 原文番号
         # (原文番号 repeats across drafts). Fall back to the 原文番号 glob only for legacy/X records
         # that have no ファイル名 stamped.
         $fname = Get-RichText $p.properties.'ファイル名'
@@ -265,21 +267,25 @@ function Invoke-ArchivePosted {
         $files = @(Get-ChildItem -LiteralPath $DirPlain -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like $pat })
         if ($files.Count -eq 0) { continue }
-        $dest = Initialize-Dir $DirArchive
+        $dest = Initialize-Dir $destDir
         foreach ($f in $files) {
-            # archive is housekeeping -- a transient OneDrive/AV lock must NOT abort the
+            # housekeeping move -- a transient OneDrive/AV lock must NOT abort the
             # whole video run; retry, then skip and let the next run pick it up.
             try {
                 Invoke-WithRetry { Move-Item -LiteralPath $f.FullName -Destination (Join-Path $dest $f.Name) -Force }
-                Write-Host "  archived: $($f.Name)"
+                Write-Host "  moved -> $(Split-Path $destDir -Leaf): $($f.Name)"
                 $moved++
             } catch {
-                Write-Warning "  archive skipped (locked, retry next run): $($f.Name)"
+                Write-Warning "  move skipped (locked, retry next run): $($f.Name)"
             }
         }
     }
     return $moved
 }
+# 使用済み -> 投稿済\  (re-post prevention)
+function Invoke-ArchivePosted   { return (Move-FootageForStatus "使用済み" $DirArchive) }
+# 不採用   -> 不採用\  (rejected drafts' video material off the staging shelf)
+function Invoke-ArchiveRejected { return (Move-FootageForStatus "不採用"  $DirReject) }
 
 # newest not-posted topic whose buffer isn't already full (runaway guard)
 function Select-AutoEntry {
@@ -1040,14 +1046,14 @@ function Invoke-AutoX {
     Write-Host "X-variety produced $($res.Count) cut(s) for $num."
 }
 
-# --- ARCHIVE-ONLY: tidy 使用済み素材 on demand, then exit (no generation) -------
-# Run this right after you post a video and flip its Notion record to 使用済み, so the
-# consumed 字幕なし material moves to 投稿済\ immediately instead of lingering until the
-# next -Auto batch -- closes the "which file did I already use?" staging gap.
+# --- ARCHIVE-ONLY: tidy 使用済み(->投稿済\) and 不採用(->不採用\) on demand, then exit (no gen) -
+# Run this right after you flip a Notion record to 使用済み or 不採用, so the consumed 字幕なし
+# material moves out of staging immediately instead of lingering until the next -Auto batch.
 if ($ArchiveOnly) {
     Import-DotEnv
     $archived = Invoke-ArchivePosted
-    Write-Host "ArchiveOnly: moved $archived file(s) of 使用済み topics into 投稿済\."
+    $rejected = Invoke-ArchiveRejected
+    Write-Host "ArchiveOnly: 投稿済\ $archived 件 / 不採用\ $rejected 件 を退避しました。"
     return
 }
 
@@ -1059,7 +1065,9 @@ if ($Auto) {
     Import-DotEnv
     Write-Host "=== AUTO buffer mode (pool→TTS→video→catalog; Count=$Count) ==="
     $archived = Invoke-ArchivePosted
-    if ($archived) { Write-Host "Archived $archived file(s) of 使用済み topics." }
+    if ($archived) { Write-Host "Archived $archived file(s) of 使用済み topics into 投稿済\." }
+    $rejected = Invoke-ArchiveRejected
+    if ($rejected) { Write-Host "Moved $rejected file(s) of 不採用 topics into 不採用\." }
 
     # pool flow: take up to $Count 下書き rewrites (FIFO), and for EACH make exactly one
     # video (1案=1動画=1レコード). TTS locally, render, then promote that record to
