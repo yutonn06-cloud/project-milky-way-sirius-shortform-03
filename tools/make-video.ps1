@@ -69,6 +69,7 @@ param(
     [string]$CapCutName    = "SIRIUS_SHORT_CNT",  # the ONE reused Sirius CapCut project (swap each run)
     # --- AUTO buffer mode (for the scheduled task: full-auto up to video) ---
     [switch]$Auto,                           # buffer mode: auto-archive 使用済み, then make N cuts of the newest unposted topic
+    [switch]$ArchiveOnly,                    # JUST archive 使用済み素材 into 投稿済\ and exit (no generation). Run right after marking 使用済み to close the staging gap.
     [int]$Count           = 3,               # videos per -Auto run (cuts cycling A/B audio)
     [int]$MaxPerTopic     = 12,              # runaway guard: skip a topic once it has this many buffered cuts
     # --- X-format variety (occasional, for anti-staleness) ---
@@ -235,11 +236,21 @@ function Invoke-ArchivePosted {
     if ($posted.Count -eq 0) { return 0 }
     $moved = 0
     foreach ($p in $posted) {
-        $num = Get-RichText $p.properties.'原文番号'
-        if (-not $num) { continue }
-        # X videos are auto_X<num>_*, ショート動画 are auto_<num>_* -- pick the right one so
-        # the same 原文番号 in both pipelines never cross-archives.
-        $pat = if ($p.properties.'投稿先'.select.name -eq "X") { "auto_X${num}_*" } else { "auto_${num}_*" }
+        # PRECISE link: archive ONLY this record's own render, derived from the exact ファイル名
+        # stamped at promote time. The render stem (auto_<num>_<stamp>) is unique per video, so a
+        # 使用済み record never sweeps up a *different* record that happens to share the 原文番号
+        # (原文番号 repeats across drafts). Fall back to the 原文番号 glob only for legacy/X records
+        # that have no ファイル名 stamped.
+        $fname = Get-RichText $p.properties.'ファイル名'
+        if ($fname) {
+            $stem = $fname -replace '_字幕なし\.mp4$','' -replace '\.mp4$','' -replace '\.srt$',''
+            $pat  = "$stem*"
+        } else {
+            $num = Get-RichText $p.properties.'原文番号'
+            if (-not $num) { continue }
+            # X videos are auto_X<num>_*, ショート動画 are auto_<num>_*.
+            $pat = if ($p.properties.'投稿先'.select.name -eq "X") { "auto_X${num}_*" } else { "auto_${num}_*" }
+        }
         $files = @(Get-ChildItem -LiteralPath $DirPlain -File -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like $pat })
         if ($files.Count -eq 0) { continue }
@@ -895,6 +906,17 @@ function Invoke-AutoX {
         Set-Content -Path $statePath -Value $today -Encoding ASCII
     }
     Write-Host "X-variety produced $($res.Count) cut(s) for $num."
+}
+
+# --- ARCHIVE-ONLY: tidy 使用済み素材 on demand, then exit (no generation) -------
+# Run this right after you post a video and flip its Notion record to 使用済み, so the
+# consumed 字幕なし material moves to 投稿済\ immediately instead of lingering until the
+# next -Auto batch -- closes the "which file did I already use?" staging gap.
+if ($ArchiveOnly) {
+    Import-DotEnv
+    $archived = Invoke-ArchivePosted
+    Write-Host "ArchiveOnly: moved $archived file(s) of 使用済み topics into 投稿済\."
+    return
 }
 
 # --- AUTO buffer mode (scheduled task) -----------------------------------------
