@@ -51,6 +51,17 @@ param(
     [string]$OutDir        = "C:\Users\yuton\OneDrive\Desktop\自動生成動画",
     [double]$MusicVolume   = 0.18,
     [int]$SpeedInserts     = -1,             # -1 = auto (random 0-2); 0 = none; N = fixed
+    # visual assembly pattern (derivative of the classic grammar; default keeps current behavior):
+    #   classic    = 1 base clip (occasionally sped up) + late-biased 高速 inserts (current default)
+    #   multiscene = split the timeline into $Scenes script-synced segments (共感/転換/締め),
+    #                each a DISTINCT 通常速度 clip, switching on sentence boundaries (cut lands on a narration beat)
+    #   dynamic    = multiscene + an in-clip SPEED BURST (5-10x then back to 1x) leading each interior
+    #                scene's 転換 -- "音とスクリプトに合わせた緩急": calm 共感 -> jolt at 転換 -> settle 締め.
+    #                The burst fast-forwards the SAME 通常速度 clip and resumes it at 1x (no separate 高速 pool).
+    [ValidateSet("classic","multiscene","dynamic")] [string]$Pattern = "classic",
+    [int]$Scenes           = 3,              # multiscene/dynamic: number of script-synced scenes
+    [double]$BurstSpeed    = 6.0,            # dynamic: fast-forward multiplier for the 転換 burst (5-10x)
+    [double]$BurstDur      = 1.2,            # dynamic: OUTPUT seconds the burst occupies before snapping back to 1x
     [ValidateSet("auto","on","off")] [string]$Cinematic = "auto",
     [double]$NsfwThreshold = 0.25,           # nudity-detection score threshold (lower = stricter)
     [switch]$NoNsfwScan,                     # DANGER: disable the nudity gate (off by default = gate ON)
@@ -441,8 +452,40 @@ function Select-CleanFast($fastClips, $dur) {
     throw "[NSFW] no clean 高速 insert window -- aborting (review the 高速 pool)."
 }
 
+# split the narration into $sceneCount script-synced segment durations (sum = $Dur), so a
+# scene change lands on a sentence boundary near the script's structural shifts (共感/転換/締め).
+# Sentences are grouped into contiguous scenes by index; each scene's length is char-weighted
+# (audio time ≈ character count). Falls back to an even split if a segment would be too short or
+# the script has too few sentences. NOTE: PowerShell variables are case-insensitive, so the
+# total-duration param is $Dur (NOT $D) to avoid colliding with any per-segment $d/$seg.
+function Get-SceneDurations($caption, $Dur, $sceneCount) {
+    $sents = @([regex]::Matches("$caption", '[^。！？!?]*[。！？!?]') | ForEach-Object { $_.Value } | Where-Object { $_.Trim().Length -gt 0 })
+    if ($sents.Count -lt 2) { return ,@([double]$Dur) }            # too short -> single scene
+    $n  = $sents.Count
+    $sc = [math]::Min([int]$sceneCount, $n)
+    $lens  = @($sents | ForEach-Object { [double]$_.Length })
+    $total = ($lens | Measure-Object -Sum).Sum
+    $durs = New-Object System.Collections.Generic.List[double]
+    $sumSoFar = 0.0
+    for ($g = 0; $g -lt $sc; $g++) {
+        $startIdx = [int][math]::Floor($g * $n / $sc)
+        $endIdx   = [int][math]::Floor(($g + 1) * $n / $sc)        # exclusive
+        $chars = 0.0
+        for ($k = $startIdx; $k -lt $endIdx; $k++) { $chars += $lens[$k] }
+        if ($g -eq $sc - 1) { $durs.Add([math]::Round($Dur - $sumSoFar, 2)) }
+        else { $seg = [math]::Round($Dur * $chars / $total, 2); $durs.Add($seg); $sumSoFar += $seg }
+    }
+    $arr = $durs.ToArray()
+    if (@($arr | Where-Object { $_ -lt 4 }).Count -gt 0) {         # any segment too short -> even split
+        $arr = @(); $each = [math]::Round($Dur / $sc, 2)
+        for ($i = 0; $i -lt $sc - 1; $i++) { $arr += $each }
+        $arr += [math]::Round($Dur - $each * ($sc - 1), 2)
+    }
+    return ,$arr
+}
+
 # --- plan the visual timeline: 通常速度 main (1x, occasionally faster) + 高速 inserts (1x), inserts biased late ---
-function Get-VideoPieces($D) {
+function Get-VideoPieces($D, $caption) {
     $normalDir = Join-Path $MaterialsRoot "通常速度"
     $fastDir   = Join-Path $MaterialsRoot "高速"
 
@@ -450,6 +493,45 @@ function Get-VideoPieces($D) {
         $need = [math]::Ceiling($D) + 1
         $b = Select-CleanBaseClip $fastDir $need
         return @(@{ File=$b.File; Name=$b.Name; Start=$b.Start; OutDur=$D; Speed=1.0; Kind='main' })
+    }
+
+    # multiscene: distinct base clip per script-synced segment, hard-cut on sentence boundaries
+    if ($Pattern -eq "multiscene") {
+        $durs = Get-SceneDurations $caption $D $Scenes
+        $pieces = @()
+        foreach ($seg in $durs) {
+            $need = [math]::Ceiling($seg) + 1
+            $c = Select-CleanBaseClip $normalDir $need           # rotation advances -> each scene a different clip
+            $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=$seg; Speed=1.0; Kind='scene' }
+        }
+        return $pieces
+    }
+
+    # dynamic: multiscene scenes, but each INTERIOR scene (the 転換 body) leads with an in-clip
+    # speed burst -- fast-forward the SAME clip $BurstSpeed× for $BurstDur, then resume it at 1x.
+    # 共感(first) and 締め(last) stay calm at 1x. Burst window + resume both come from ONE clean clip
+    # span so NSFW scanning covers the fast-forwarded footage too.
+    if ($Pattern -eq "dynamic") {
+        $durs = Get-SceneDurations $caption $D $Scenes
+        $sc = $durs.Count
+        $pieces = @()
+        for ($g = 0; $g -lt $sc; $g++) {
+            $sceneDur = [double]$durs[$g]
+            $isInterior = ($g -gt 0 -and $g -lt $sc - 1)
+            if ($isInterior -and $sceneDur -gt ($BurstDur + 3)) {
+                $burstSrc = $BurstDur * $BurstSpeed
+                $contOut  = [math]::Round($sceneDur - $BurstDur, 2)
+                $srcNeed  = [math]::Ceiling($burstSrc + $contOut) + 2
+                $c = Select-CleanBaseClip $normalDir $srcNeed
+                $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=[math]::Round($BurstDur,2); Speed=$BurstSpeed; Kind='burst' }
+                $pieces += @{ File=$c.File; Name=$c.Name; Start=[math]::Round($c.Start + $burstSrc,2); OutDur=$contOut; Speed=1.0; Kind='scene' }
+            } else {
+                $need = [math]::Ceiling($sceneDur) + 1
+                $c = Select-CleanBaseClip $normalDir $need
+                $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=$sceneDur; Speed=1.0; Kind='scene' }
+            }
+        }
+        return $pieces
     }
 
     $K = if ($SpeedInserts -ge 0) { $SpeedInserts } else { Get-Random -InputObject @(0,1,1,2) }
@@ -798,7 +880,7 @@ function Build-One($audioPath, $caption, $tag) {
     if ($videoDur -le 0) { throw "audio duration is zero: $audioPath" }
 
     # plan clips -- NSFW gate is built into selection (only clean windows are used; fail-closed)
-    $pieces = @(Get-VideoPieces $videoDur)
+    $pieces = @(Get-VideoPieces $videoDur $caption)
     if ($NoNsfwScan) { Write-Warning "  [NSFW] gate DISABLED (-NoNsfwScan)" } else { Write-Host "  [NSFW] clean-window selection OK" }
 
     # pick BGM recursively (any audio format -- ffmpeg handles wav/mp3/m4a/...), but
@@ -813,11 +895,17 @@ function Build-One($audioPath, $caption, $tag) {
     $grade = if ($useCinematic) { $script:CinematicLooks | Get-Random } else { $null }
 
     Write-Host ("  pieces: " + (($pieces | ForEach-Object { "$($_.Name)@$($_.Start)s/$($_.OutDur)s x$($_.Speed)" }) -join "  |  "))
-    # report high-speed inserts in OUTPUT-timeline coordinates
+    # report scene/insert events in OUTPUT-timeline coordinates
     $t0 = 0.0
+    $scN = 0
     foreach ($p in $pieces) {
         if ($p.Kind -eq 'insert') {
             Write-Host ("  >> 高速インサート: {0} を 出力 {1:N1}秒〜{2:N1}秒 に {3:N1}秒挿入" -f $p.Name, $t0, ($t0 + $p.OutDur), $p.OutDur)
+        } elseif ($p.Kind -eq 'scene') {
+            $scN++
+            Write-Host ("  >> シーン{0}: {1} を 出力 {2:N1}秒〜{3:N1}秒（{4:N1}秒）" -f $scN, $p.Name, $t0, ($t0 + $p.OutDur), $p.OutDur)
+        } elseif ($p.Kind -eq 'burst') {
+            Write-Host ("  >> 速度バースト: {0} を 出力 {1:N1}秒〜{2:N1}秒 に {3}倍速（{4:N1}秒で素材{5:N1}秒分を消化）" -f $p.Name, $t0, ($t0 + $p.OutDur), $p.Speed, $p.OutDur, ($p.OutDur * $p.Speed))
         }
         $t0 += $p.OutDur
     }
