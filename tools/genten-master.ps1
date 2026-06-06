@@ -167,11 +167,19 @@ if ($Sync) {
     $masters = Get-AllPages -DbId $MASTER_DB
     Write-Host "[sync] master pages: $($masters.Count)"
 
+    # CSV (source of truth) の原文番号集合 — 孤児/欠落の照合に使う。
+    $csvNums = @{}
+    foreach ($r in (Import-Csv -Path $CSV)) { $csvNums[[int]$r.num] = $true }
+    $orphans = @()       # Notion にあるが CSV から消えた原文番号 = 削除候補（残骸）
+    $masterNums = @{}
+
     $updated = 0; $unchanged = 0
     foreach ($pg in $masters) {
         $num = $pg.properties.'原文番号'.number
         if ($null -eq $num) { continue }
         $num = [int]$num
+        $masterNums[$num] = $true
+        if (-not $csvNums.ContainsKey($num)) { $orphans += $num }
 
         $curCount  = $pg.properties.'使用回数'.number
         $curStatus = $pg.properties.'最新ステータス'.select.name
@@ -209,4 +217,15 @@ if ($Sync) {
         Start-Sleep -Milliseconds 120
     }
     Write-Host "[sync] done. updated=$updated unchanged=$unchanged"
+
+    # 照合レポート（非破壊）— CSV と Notion のズレを surfacing する。
+    $missing = @()  # CSV にあるが Notion に無い = 要 -Import
+    foreach ($n in $csvNums.Keys) { if (-not $masterNums.ContainsKey($n)) { $missing += $n } }
+    if ($missing.Count -gt 0) {
+        Write-Host "[sync] WARN: CSVにあるがNotion未登録 $($missing.Count)件 -> -Import を実行: $((($missing | Sort-Object) -join ', '))"
+    }
+    if ($orphans.Count -gt 0) {
+        Write-Host "[sync] WARN: NotionにあるがCSVから消えた(削除候補/残骸) $($orphans.Count)件: $((($orphans | Sort-Object) -join ', '))"
+        Write-Host "[sync]       -> 原文番号は不変ID。物理削除する場合のみ Notion で該当ページを手動アーカイブ（自動削除はしない）。"
+    }
 }
