@@ -484,6 +484,19 @@ function Get-SceneDurations($caption, $Dur, $sceneCount) {
     return ,$arr
 }
 
+# cumulative END time (output seconds) of each sentence -- the narration "間" points a speed
+# burst can land on without cutting a word. Char-weighted (audio time ≈ character count).
+function Get-SentenceTimes($caption, $Dur) {
+    $sents = @([regex]::Matches("$caption", '[^。！？!?]*[。！？!?]') | ForEach-Object { $_.Value } | Where-Object { $_.Trim().Length -gt 0 })
+    if ($sents.Count -lt 1) { return ,@([double]$Dur) }
+    $lens = @($sents | ForEach-Object { [double]$_.Length })
+    $total = ($lens | Measure-Object -Sum).Sum
+    $times = New-Object System.Collections.Generic.List[double]
+    $cum = 0.0
+    foreach ($L in $lens) { $cum += $L; $times.Add([math]::Round($Dur * $cum / $total, 2)) }
+    return ,$times.ToArray()
+}
+
 # --- plan the visual timeline: 通常速度 main (1x, occasionally faster) + 高速 inserts (1x), inserts biased late ---
 function Get-VideoPieces($D, $caption) {
     $normalDir = Join-Path $MaterialsRoot "通常速度"
@@ -499,36 +512,49 @@ function Get-VideoPieces($D, $caption) {
     if ($Pattern -eq "multiscene") {
         $durs = Get-SceneDurations $caption $D $Scenes
         $pieces = @()
-        foreach ($seg in $durs) {
+        for ($g = 0; $g -lt $durs.Count; $g++) {
+            $seg = [double]$durs[$g]
             $need = [math]::Ceiling($seg) + 1
             $c = Select-CleanBaseClip $normalDir $need           # rotation advances -> each scene a different clip
-            $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=$seg; Speed=1.0; Kind='scene' }
+            $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=$seg; Speed=1.0; Kind='scene'; SceneIdx=$g }
         }
         return $pieces
     }
 
-    # dynamic: multiscene scenes, but each INTERIOR scene (the 転換 body) leads with an in-clip
-    # speed burst -- fast-forward the SAME clip $BurstSpeed× for $BurstDur, then resume it at 1x.
-    # 共感(first) and 締め(last) stay calm at 1x. Burst window + resume both come from ONE clean clip
-    # span so NSFW scanning covers the fast-forwarded footage too.
+    # dynamic: multiscene scenes + ONE in-clip speed burst placed in the BACK HALF (>= 0.5D, aimed
+    # ~0.62D), on a sentence boundary (narration "間"). The burst fast-forwards the SAME clip
+    # $BurstSpeed× for $BurstDur then resumes it at 1x. Placing it late (not at the head) is what
+    # makes the change felt -- the calm 共感/転換 build sets up the contrast, then the late jolt lands.
     if ($Pattern -eq "dynamic") {
         $durs = Get-SceneDurations $caption $D $Scenes
         $sc = $durs.Count
+        $starts = @(); $acc = 0.0
+        foreach ($sd in $durs) { $starts += $acc; $acc += [double]$sd }   # NB: not $d -- collides with $D (case-insensitive)
+        # pick the burst time: a sentence boundary in [0.5D, 0.85D], nearest to 0.62D
+        $stimes = Get-SentenceTimes $caption $D
+        $lo = 0.5 * $D; $hi = 0.85 * $D; $target = 0.62 * $D
+        $cand = @($stimes | Where-Object { $_ -ge $lo -and $_ -le $hi })
+        if ($cand.Count -eq 0) { $cand = @($stimes | Where-Object { $_ -ge $lo }) }
+        $burstT = if ($cand.Count -gt 0) { @($cand | Sort-Object { [math]::Abs($_ - $target) })[0] } else { $null }
         $pieces = @()
         for ($g = 0; $g -lt $sc; $g++) {
-            $sceneDur = [double]$durs[$g]
-            $isInterior = ($g -gt 0 -and $g -lt $sc - 1)
-            if ($isInterior -and $sceneDur -gt ($BurstDur + 3)) {
+            $sStart = [double]$starts[$g]; $sDur = [double]$durs[$g]; $sEnd = $sStart + $sDur
+            $doBurst = ($null -ne $burstT -and $burstT -ge $sStart -and $burstT -lt $sEnd -and $sDur -gt ($BurstDur + 2))
+            if ($doBurst) {
+                $Lb = [math]::Round($burstT - $sStart, 2)            # burst offset within this scene
+                if ($Lb -lt 0) { $Lb = 0 }
+                $postOut = [math]::Round($sDur - $Lb - $BurstDur, 2)
+                if ($postOut -lt 1) { $Lb = [math]::Max(0, [math]::Round($sDur - $BurstDur - 1, 2)); $postOut = [math]::Round($sDur - $Lb - $BurstDur, 2) }
                 $burstSrc = $BurstDur * $BurstSpeed
-                $contOut  = [math]::Round($sceneDur - $BurstDur, 2)
-                $srcNeed  = [math]::Ceiling($burstSrc + $contOut) + 2
+                $srcNeed  = [math]::Ceiling($Lb + $burstSrc + $postOut) + 2
                 $c = Select-CleanBaseClip $normalDir $srcNeed
-                $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=[math]::Round($BurstDur,2); Speed=$BurstSpeed; Kind='burst' }
-                $pieces += @{ File=$c.File; Name=$c.Name; Start=[math]::Round($c.Start + $burstSrc,2); OutDur=$contOut; Speed=1.0; Kind='scene' }
+                if ($Lb -ge 0.5) { $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=$Lb; Speed=1.0; Kind='scene'; SceneIdx=$g } }
+                $pieces += @{ File=$c.File; Name=$c.Name; Start=[math]::Round($c.Start + $Lb,2); OutDur=[math]::Round($BurstDur,2); Speed=$BurstSpeed; Kind='burst'; SceneIdx=$g }
+                $pieces += @{ File=$c.File; Name=$c.Name; Start=[math]::Round($c.Start + $Lb + $burstSrc,2); OutDur=$postOut; Speed=1.0; Kind='scene'; SceneIdx=$g }
             } else {
-                $need = [math]::Ceiling($sceneDur) + 1
+                $need = [math]::Ceiling($sDur) + 1
                 $c = Select-CleanBaseClip $normalDir $need
-                $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=$sceneDur; Speed=1.0; Kind='scene' }
+                $pieces += @{ File=$c.File; Name=$c.Name; Start=$c.Start; OutDur=$sDur; Speed=1.0; Kind='scene'; SceneIdx=$g }
             }
         }
         return $pieces
@@ -835,17 +861,22 @@ $script:CinematicLooks = @(
 # caption and no-caption versions so they are identical except for the subtitles.
 function Invoke-Assemble($pieces, $music, $grade, $audioPath, $assPath, $videoDur, $outFile) {
     $inputs = @(); $nodes = @(); $vlabels = @()
+    # per-piece grade: when scenes carry their own grade (multiscene/dynamic per-scene look),
+    # bake it into that piece's chain so each scene is visibly distinct. Else a single global grade
+    # is applied once after concat (classic behavior).
+    $anyPieceGrade = @($pieces | Where-Object { $_.ContainsKey('Grade') -and $_.Grade }).Count -gt 0
     for ($i = 0; $i -lt $pieces.Count; $i++) {
         $p = $pieces[$i]
         $srcDur = [math]::Round($p.OutDur * $p.Speed, 2) + 0.2
         $inputs += @("-ss", $p.Start, "-t", $srcDur, "-i", $p.File)
         $sp = "setpts=$([math]::Round(1.0/$p.Speed,4))*PTS"
-        $nodes += "[$($i):v]$sp,scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=24,trim=duration=$($p.OutDur),setpts=PTS-STARTPTS[v$i]"
+        $pg = if ($p.ContainsKey('Grade') -and $p.Grade) { ",$($p.Grade)" } else { "" }
+        $nodes += "[$($i):v]$sp,scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,fps=24,trim=duration=$($p.OutDur),setpts=PTS-STARTPTS$pg[v$i]"
         $vlabels += "[v$i]"
     }
     $nodes += "$($vlabels -join '')concat=n=$($pieces.Count):v=1:a=0[vc]"
     $cur = "[vc]"
-    if ($grade) { $nodes += "$cur$grade[vg]"; $cur = "[vg]" }
+    if ($grade -and -not $anyPieceGrade) { $nodes += "$cur$grade[vg]"; $cur = "[vg]" }
     if ($assPath) {
         $assEsc = ($assPath -replace '\\','/') -replace ':','\:'
         $nodes += "$cur" + "subtitles='$assEsc'[v]"; $cur = "[v]"
@@ -894,6 +925,19 @@ function Build-One($audioPath, $caption, $tag) {
     $useCinematic = switch ($Cinematic) { "on" { $true } "off" { $false } default { (Get-Random -Minimum 0 -Maximum 100) -lt 60 } }
     $grade = if ($useCinematic) { $script:CinematicLooks | Get-Random } else { $null }
 
+    # per-scene grade (multiscene/dynamic): give each scene a DISTINCT look so the cut is visible.
+    # Pieces of the same scene (pre/burst/post) share the scene's grade. Disables the global grade.
+    $hasScenes = @($pieces | Where-Object { $_.ContainsKey('SceneIdx') }).Count -gt 0
+    if ($hasScenes -and $useCinematic) {
+        $idxs = @($pieces | ForEach-Object { $_.SceneIdx } | Select-Object -Unique)
+        $shuffled = @($script:CinematicLooks | Sort-Object { Get-Random })
+        $gmap = @{}
+        for ($gi = 0; $gi -lt $idxs.Count; $gi++) { $gmap[[int]$idxs[$gi]] = $shuffled[$gi % $shuffled.Count] }
+        foreach ($pp in $pieces) { if ($pp.ContainsKey('SceneIdx')) { $pp.Grade = $gmap[[int]$pp.SceneIdx] } }
+        $grade = $null
+        Write-Host ("  per-scene grade: " + (($idxs | ForEach-Object { "S$_=" + ($gmap[[int]$_] -replace ',.*','…') }) -join "  |  "))
+    }
+
     Write-Host ("  pieces: " + (($pieces | ForEach-Object { "$($_.Name)@$($_.Start)s/$($_.OutDur)s x$($_.Speed)" }) -join "  |  "))
     # report scene/insert events in OUTPUT-timeline coordinates
     $t0 = 0.0
@@ -902,8 +946,8 @@ function Build-One($audioPath, $caption, $tag) {
         if ($p.Kind -eq 'insert') {
             Write-Host ("  >> 高速インサート: {0} を 出力 {1:N1}秒〜{2:N1}秒 に {3:N1}秒挿入" -f $p.Name, $t0, ($t0 + $p.OutDur), $p.OutDur)
         } elseif ($p.Kind -eq 'scene') {
-            $scN++
-            Write-Host ("  >> シーン{0}: {1} を 出力 {2:N1}秒〜{3:N1}秒（{4:N1}秒）" -f $scN, $p.Name, $t0, ($t0 + $p.OutDur), $p.OutDur)
+            $lbl = if ($p.ContainsKey('SceneIdx')) { "シーン" + ([int]$p.SceneIdx + 1) } else { $scN++; "シーン$scN" }
+            Write-Host ("  >> {0}: {1} を 出力 {2:N1}秒〜{3:N1}秒（{4:N1}秒）" -f $lbl, $p.Name, $t0, ($t0 + $p.OutDur), $p.OutDur)
         } elseif ($p.Kind -eq 'burst') {
             Write-Host ("  >> 速度バースト: {0} を 出力 {1:N1}秒〜{2:N1}秒 に {3}倍速（{4:N1}秒で素材{5:N1}秒分を消化）" -f $p.Name, $t0, ($t0 + $p.OutDur), $p.Speed, $p.OutDur, ($p.OutDur * $p.Speed))
         }
@@ -1031,6 +1075,14 @@ if ($Auto) {
             $text = (Get-RichText $page.properties.'リライト本文').Trim()
             if (-not $text) { Write-Warning "  draft $($page.id) has empty リライト本文 -- skip"; continue }
             Write-Host "=== pool draft: $num ($($page.id)) ==="
+            # MIX patterns across the buffer so the platform's AI doesn't read the videos as
+            # duplicate/templated content. Unless -Pattern was passed explicitly, pick one per video.
+            if (-not $PSBoundParameters.ContainsKey('Pattern')) {
+                $Pattern = Get-Random -InputObject @('classic','classic','classic','multiscene','multiscene','multiscene','dynamic','dynamic','dynamic','dynamic')
+                if ($Pattern -ne 'classic') { $Scenes = Get-Random -InputObject @(3,3,2) }
+                if ($Pattern -eq 'dynamic') { $BurstSpeed = Get-Random -InputObject @(6,6,7,8) }
+                Write-Host ("  pattern: {0}{1}" -f $Pattern, $(if ($Pattern -eq 'classic') { '' } elseif ($Pattern -eq 'dynamic') { " (Scenes=$Scenes BurstSpeed=$BurstSpeed)" } else { " (Scenes=$Scenes)" }))
+            }
             try { $audio = New-TtsAudio $text "voice_$num.mp3" }   # PAID local TTS
             catch { Write-Warning "  TTS failed for ${num}: $_"; continue }
             $built = $null
