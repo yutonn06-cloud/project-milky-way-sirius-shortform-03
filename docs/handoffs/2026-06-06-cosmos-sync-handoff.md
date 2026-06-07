@@ -52,5 +52,6 @@
 7. **原典マスター運用**：使用状況を更新したいとき `tools\genten-master.ps1 -Sync`（週次目安・ローカル）。「未使用原典（次ネタ候補）」ビューがネタ選定の入口。初回突合＝75原典使用中／総使用81（=Rewrite Script全件）と一致。
 8. **原典マスター将来案（未着手）**：(a) `-Sync` の定期自動化（ローカルtask登録 or 手動週次運用のまま）。(b) Notion DBの`-Sync`差分のみPATCHのため Rewrite Script 増加時も低コスト。(c) カテゴリ凡称の正式定義が文書化されていない（ファイル内ラベルから推定）—司令官の意図と相違あれば要修正。
 9. **動画ペーシング運用**：`-Auto` がパターン自動ミックス（classic/multiscene/dynamic）。手動固定は `-Pattern dynamic -Scenes 3 -BurstSpeed 6 -Cinematic on`。SOP=`workflows/video_pacing_research.md`・`video_pipeline_ops.md`。
-10. **持ち帰り試験（未着手）**：(a) モーショングラフィックス overlay（透過素材を転換に重ね没入感↑・技術可）、(b) スムーズ加速ランプ/境界ブラーdip、(c) 純音楽ビート同期（要beat検出）。TTS音色のダーク化は「v3はテキストに沿う」ため当面見送り。
+10. **モーショングラフィックス＝検証済み・適用なし（司令官判断 2026-06-07）**：`tools/make-mg.ps1`＋`detect-beats.py` でMG＋音ハメ5種＋ベース重畳3種を試作（commit `6f1bd89`・SOP=`workflows/mg_music_video_experiment.md` §12）。見極め＝MG＋音楽のみは独立フォーマットとして可・ベース適用は控えめ光ウォッシュ/転換ブルーム限定で有効、だが**司令官の意図と違うため当面MG適用は見送り**。ツール/知見はリポに温存（production未組込）。
+11. **持ち帰り（未着手）**：スムーズ加速ランプ/境界ブラーdip、純音楽ビート同期。TTS音色のダーク化は「v3はテキストに沿う」ため当面見送り。
 11. **投稿運用フロー**：動画化済（投稿待ち）ビューから選ぶ→Filmora仕上げ→投稿→Notion `使用済み`(or `不採用`)→`make-video.ps1 -ArchiveOnly` で 投稿済\ / 不採用\ へ即退避。
