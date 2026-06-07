@@ -24,8 +24,9 @@ function Write-Log([string]$text) { [System.IO.File]::AppendAllText($log, $text 
 
 # capture all streams as one UTF-8 block (Tee + Out-File mixed encodings -> mojibake)
 Write-Log "==== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') auto run ===="
-# -NoX: X auto-injection paused (User 2026-06-05) -- X scripts are read-optimised and
-# come out choppy via TTS; X-for-video is being curated manually for now.
+# X auto-injection is OFF by default in make-video.ps1 now (司令官 2026-06-07:
+# X型ニューストーク調はTTSで声質が変わり雰囲気が出ない→短尺専念). Re-enable only by
+# adding -WithX here. (-NoX kept as belt-and-suspenders; redundant but explicit.)
 $out = & (Join-Path $here "make-video.ps1") -Auto -NoX *>&1 | Out-String
 Write-Log $out
 Write-Log "==== exit $LASTEXITCODE @ $(Get-Date -Format 'HH:mm:ss') ===="

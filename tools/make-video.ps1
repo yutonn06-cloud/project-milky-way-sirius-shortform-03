@@ -49,7 +49,8 @@ param(
     [string]$MaterialsRoot = "C:\Users\yuton\OneDrive\Desktop\編集済みサンプル素材集",
     [string]$MusicRoot     = "C:\Users\yuton\OneDrive\Desktop\Music\Sirius",
     [string]$OutDir        = "C:\Users\yuton\OneDrive\Desktop\自動生成動画",
-    [double]$MusicVolume   = 0.18,
+    [double]$MusicVolume   = 0.13,          # BGM gain vs voice(=1.0). 司令官 2026-06-07: 音楽がボイスに対し大きい→0.18→0.13(約-3dB)で差を広げ声を前に
+
     [int]$SpeedInserts     = -1,             # -1 = auto (random 0-2); 0 = none; N = fixed
     # visual assembly pattern (derivative of the classic grammar; default keeps current behavior):
     #   classic    = 1 base clip (occasionally sped up) + late-biased 高速 inserts (current default)
@@ -84,9 +85,10 @@ param(
     [int]$Count           = 3,               # videos per -Auto run (cuts cycling A/B audio)
     [int]$MaxPerTopic     = 12,              # runaway guard: skip a topic once it has this many buffered cuts
     # --- X-format variety (occasional, for anti-staleness) ---
-    [string[]]$XDays      = @("Tuesday","Friday"),  # weekdays -Auto ALSO makes 1 X-format video (~weekly cadence)
+    [string[]]$XDays      = @("Tuesday","Friday"),  # weekdays -Auto makes 1 X-format video IF -WithX is set
     [int]$XCount          = 2,               # cuts per X item
-    [switch]$NoX,                            # disable the X-variety injection
+    [switch]$WithX,                          # OPT-IN: re-enable X-format variety. OFF by default (司令官 2026-06-07: X型ニューストーク調はTTSで声質が変わり雰囲気が出ない→短尺専念). [[x-pipeline-dormant]]
+    [switch]$NoX,                            # (deprecated) hard-disable; X is already OFF by default now
     [switch]$KeepIntermediate
 )
 
@@ -1014,7 +1016,7 @@ function Invoke-CapCutDraft($plain, $srt, $name) {
 # make $XCount cuts into the SAME buffer, mark it 動画化済. Files are auto_X<num>_* so they
 # never collide with ショート動画 of the same 原文番号.
 function Invoke-AutoX {
-    if ($NoX) { return }
+    if (-not $WithX -or $NoX) { return }   # X-format is OPT-IN now (default OFF; pass -WithX to re-enable)
     $dow = (Get-Date).DayOfWeek.ToString()
     if ($XDays -notcontains $dow) { Write-Host "X: $dow is not an X-day ($($XDays -join '/')) -- skip."; return }
     $statePath = Get-XStatePath
@@ -1106,7 +1108,7 @@ if ($Auto) {
         Write-Host "Auto produced $made video(s) from pool ($($drafts.Count) draft(s) available)."
     }
 
-    Invoke-AutoX   # occasional X-format variety (火・金) -- paused via -NoX
+    Invoke-AutoX   # X-format variety (火・金) -- OFF by default; opt-in with -WithX (司令官 2026-06-07)
     Write-Host "==="
     return
 }
