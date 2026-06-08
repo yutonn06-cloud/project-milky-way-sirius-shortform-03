@@ -54,6 +54,7 @@ $databaseId = "087eff43-caa5-41ff-944e-7982f68faef8"
 $schema = [ordered]@{
     "タイトル"     = "title"
     "リライト本文"   = "rich_text"
+    "キャプション"   = "rich_text"
     "リライト本文B"  = "rich_text"
     "投稿先"      = "select"
     "ターゲット"    = "rich_text"
