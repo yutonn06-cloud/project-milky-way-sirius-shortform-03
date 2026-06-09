@@ -64,8 +64,8 @@
     "measurement_method": "Notion DB の生成カウント + 採用カラム（A案/B案/両方/不採用）集計。将来は SNS エンゲージを追加。"
   },
 
-  "inherited_skills": [],
-  "_inherited_skills_note": "D 区分即時昇格 0 件（migration-extractions §3-1）。理由 = genre 特異物（怪しい系レトリック）の艦隊共通化は有害（汚染回避）＝scope_in=0 と整合（Thuban の Notion 固有性とは別理由・結論は同じ D=0）。",
+  "inherited_skills": ["context-hygiene"],
+  "_inherited_skills_note": "genre 特異物（怪しい系レトリック）の D 区分即時昇格は 0 件（migration-extractions §3-1・汚染回避 scope_in=0）。context-hygiene は fleet baseline スキル（D7・CR-COSMOS-20260608-157）を CR-159 で pull-only 遡及採用（2026-06-09・無改変コピー）＝genre 非依存の project-agnostic maintenance スキルゆえ汚染懸念に該当せず。",
 
   "constitution_hash": "step5-v0.1-placeholder-cr-20260604-141"
 }
