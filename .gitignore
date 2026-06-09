@@ -9,5 +9,6 @@ headers_*.txt
 logs/
 .archive/
 .tmp/
+__pycache__/
 credentials.json
 token.json

@@ -1,0 +1,37 @@
+[
+  {
+    "timestamp": "2026-06-09T01:46:28+00:00",
+    "note": "baseline: context-hygiene adoption (CR-159) + cleanup(.tmp/logs/root-img) + video-automation.md memory compression",
+    "sources": {
+      "root_claude_md": {
+        "bytes": 4919,
+        "chars": 4599,
+        "tokens": 1415
+      },
+      "planet_core": {
+        "bytes": 10500,
+        "chars": 6752,
+        "tokens": 2078
+      },
+      "memory_index": {
+        "bytes": 731,
+        "chars": 657,
+        "tokens": 202
+      },
+      "skill_frontmatter": {
+        "bytes": 2409,
+        "chars": 1035,
+        "tokens": 318,
+        "count": 3
+      }
+    },
+    "totals": {
+      "bytes": 18559,
+      "tokens": 4013
+    },
+    "budgets": {
+      "memory_index_pct": 3.0,
+      "planet_core_pct": 41.6
+    }
+  }
+]
